@@ -31,4 +31,5 @@ cd gatk-${version}
 ./gatk ValidateSamFile -I ../$1 -M SUMMARY
 
 # clean up decrypted file
+cd ..
 rm $1
