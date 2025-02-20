@@ -53,6 +53,8 @@ def run_server(snpguest:str):
     bucket_name = "gatk-amd-genomics-test-data"
 
     client_fs_base = "client"
+    if not os.path.exists(client_fs_base):
+        os.mkdir(client_fs_base)
 
     try:
         while True:
