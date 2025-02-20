@@ -55,12 +55,12 @@ def run_server(snpguest:str):
     bucket_name = "gatk-amd-genomics-test-data"
 
     client_fs_base = os.path.expanduser("~/client")
-    if not os.path.exists(client_fs_base):
-        os.mkdir(client_fs_base)
 
     try:
         while True:
             connection, address = server.accept()
+            if not os.path.exists(client_fs_base):
+                os.mkdir(client_fs_base)
 
             try:
                 # AMD SEV-SNP attestation
