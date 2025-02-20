@@ -155,6 +155,8 @@ def run_client(host, port, snpguest, report_dir, cert_dir, proc_model, data_path
         with open(result_path, "wb") as f:
             f.write(result_content)
 
+        print(f"Results received and stored in {result_path}")
+
     except Exception as e:
         print(e)
         client.close()
