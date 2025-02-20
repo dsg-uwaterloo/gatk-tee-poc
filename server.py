@@ -9,9 +9,9 @@ import boto3
 
 from socket import *
 
-def sendMessage(socket, file_content):
-    socket.send(len(file_content).to_bytes(4, byteorder='big'))
-    socket.sendall(file_content)
+def sendMessage(socket, message):
+    socket.send(len(message).to_bytes(4, byteorder='big'))
+    socket.sendall(message)
 
 def receiveMessage(socket):
     message_size = int.from_bytes(socket.recv(4), byteorder='big')
@@ -119,11 +119,12 @@ def run_server(snpguest:str):
                         print(f"Finished reading and decrypting data files in {file_path}")
 
                     elif cmd[0] == "SCRIPT":
+                        result_path = cmd[2]
                         # set file_path as executable and execute script (with no arguments)
                         subprocess.run(f"chmod +x {file_path}; bash {file_path}", shell=True, check=True, capture_output=True)
 
                         # send result back to client
-                        with open("result.txt", "rb") as f:
+                        with open(os.path.join(client_fs_base, result_path), "rb") as f:
                             result_content = f.read()
 
                         sendMessage(connection, result_content)

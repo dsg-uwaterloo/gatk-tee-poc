@@ -105,7 +105,7 @@ def verify_attestation(snpguest, report_path, cert_dir):
     except subprocess.CalledProcessError as e:
         raise Exception(f"Failed to verify attestation report: {e}")
 
-def run_client(host, port, snpguest, report_dir, cert_dir, proc_model, data, gatk_script):
+def run_client(host, port, snpguest, report_dir, cert_dir, proc_model, data_path, gatk_script, result_path):
     client = socket(AF_INET, SOCK_STREAM)
 
     #client.settimeout(10)
@@ -136,23 +136,23 @@ def run_client(host, port, snpguest, report_dir, cert_dir, proc_model, data, gat
         verify_attestation(snpguest, report_path, cert_dir)
 
         # send file with required data files that server should fetch from s3 bucket
-        with open(data, "rb") as f:
+        with open(data_path, "rb") as f:
             data_content = f.read()
 
-        sendMessage(client, f"DATA {os.path.basename(data)}".encode())
+        sendMessage(client, f"DATA {os.path.basename(data_path)}".encode())
         sendMessage(client, data_content)
 
         # send GATK command script
         with open(gatk_script, "rb") as f:
             script_content = f.read()
 
-        sendMessage(client, f"SCRIPT {os.path.basename(gatk_script)}".encode())
+        sendMessage(client, f"SCRIPT {os.path.basename(gatk_script)} {result_path}".encode())
         sendMessage(client, script_content)
 
-        # get results and write to result.txt
+        # get results and write to result_path
         result_content = receiveMessage(client)
 
-        with open("result.txt", "wb") as f:
+        with open(result_path, "wb") as f:
             f.write(result_content)
 
     except Exception as e:
@@ -170,11 +170,12 @@ def main():
         parser.add_argument('-sh', '--server_host', required=True, help="Machine that the server is running on")
         parser.add_argument('-sp', '--server_port', default=8080, help="Server port number (default: 8080)")
         parser.add_argument('-sg', '--snpguest', default=None, help="Location of the snpguest utility executable (default: fetches and builds snpguest from source)")
-        parser.add_argument('-rp', '--report_dir', default=".", help="Attestation report directory (default: .)")
+        parser.add_argument('-rd', '--report_dir', default=".", help="Attestation report directory (default: .)")
         parser.add_argument('-cd', '--cert_dir', default="./certs", help="Location to write certificates to (default: ./certs)")
         parser.add_argument('-pm', '--processor_model', default="milan", help="Processor model (default: milan)")
         parser.add_argument('-d', '--data', required=True, help="Name of file containing all newline separated data files required to execute gatk script")
         parser.add_argument('-gs', '--gatk_script', required=True, help="Script to fetch gatk executable and run gatk commands")
+        parser.add_argument('-r', '--result', required=True, help="Name of file that results of executing gatk_script will be stored in relative to location of gatk_script")
 
         args = parser.parse_args()
 
@@ -195,7 +196,7 @@ def main():
 
         create_dirs([args.report_dir, args.cert_dir])
         
-        run_client(args.server_host, int(args.server_port), args.snpguest, args.report_dir, args.cert_dir, args.processor_model, args.data, args.gatk_script)
+        run_client(args.server_host, int(args.server_port), args.snpguest, args.report_dir, args.cert_dir, args.processor_model, args.data, args.gatk_script, args.result)
     except Exception as e:
         print(f"Unexpected error occurred: {e}")
         sys.exit(1)
