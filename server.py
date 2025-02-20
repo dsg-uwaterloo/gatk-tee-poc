@@ -2,6 +2,8 @@ import argparse
 import os
 import subprocess
 import sys
+import shutil
+import pathlib
 
 import boto3
 
@@ -52,7 +54,7 @@ def run_server(snpguest:str):
     s3 = boto3.client('s3')
     bucket_name = "gatk-amd-genomics-test-data"
 
-    client_fs_base = "client"
+    client_fs_base = os.path.expanduser("~/client")
     if not os.path.exists(client_fs_base):
         os.mkdir(client_fs_base)
 
@@ -82,6 +84,9 @@ def run_server(snpguest:str):
                     sendMessage(connection, cert_content)
                 
                 connection.send("\r\n".encode())
+
+                # change into client directory
+                os.chdir(client_fs_base);
 
                 while True:
                     # listen for client requests until there are no more
@@ -128,6 +133,9 @@ def run_server(snpguest:str):
                 print(e)
 
             # TODO: remove all files created for client before closing connection
+            if os.getcwd() == client_fs_base:
+                os.chdir("../")
+            shutil.rmtree(pathlib.Path(client_fs_base))
             connection.close()
     except Exception as e:
         print(e)
