@@ -7,9 +7,13 @@ import boto3
 
 from socket import *
 
-def sendFileContents(socket, file_content):
+def sendMessage(socket, file_content):
     socket.send(len(file_content).to_bytes(4, byteorder='big'))
     socket.sendall(file_content)
+
+def receiveMessage(socket):
+    message_size = int.from_bytes(socket.recv(4), byteorder='big')
+    return socket.recv(message_size)
     
 
 def generate_certificates(snpguest: str):
@@ -61,7 +65,7 @@ def run_server(snpguest:str):
                     report_content = f.read()
 
                 # Send the length of the attestation report to the client
-                sendFileContents(connection, report_content)
+                sendMessage(connection, report_content)
 
                 # generate and send certificates
                 cert_dir = generate_certificates(snpguest)
@@ -71,13 +75,13 @@ def run_server(snpguest:str):
                         cert_content = f.read()
 
                     connection.send(cert_file.encode())
-                    sendFileContents(connection, cert_content)
+                    sendMessage(connection, cert_content)
                 
                 connection.send("\r\n".encode())
 
                 while True:
                     # listen for client requests until there are no more
-                    cmd = connection.recv(1024).decode().split()
+                    cmd = receiveMessage(connection)
                     file_path = ''
 
                     if len(cmd) < 2 or cmd[0] not in ["DATA", "SCRIPT"]:
@@ -85,8 +89,7 @@ def run_server(snpguest:str):
                     
                     if cmd[0] in ["DATA", "SCRIPT"]:
                         file_path = cmd[1]
-                        file_size = int.from_bytes(connection.recv(4), byteorder='big')
-                        file_contents = connection.recv(file_size)
+                        file_contents = receiveMessage(connection)
 
                         with open(file_path, "wb") as f:
                             f.write(file_contents)
@@ -112,7 +115,7 @@ def run_server(snpguest:str):
                         with open("result.txt", "rb") as f:
                             result_content = f.read()
 
-                        sendFileContents(connection, result_content)
+                        sendMessage(connection, result_content)
 
             except Exception as e:
                 print(e)

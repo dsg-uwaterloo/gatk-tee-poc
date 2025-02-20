@@ -10,13 +10,13 @@ def create_dirs(dirs):
         if not os.path.exists(dir):
             os.mkdir(dir)
 
-def getFileContents(socket):
-    file_size = int.from_bytes(socket.recv(4), byteorder='big')
-    return socket.recv(file_size)
+def receiveMessage(socket):
+    message_size = int.from_bytes(socket.recv(4), byteorder='big')
+    return socket.recv(message_size)
 
-def sendFileContents(socket, file_content):
-    socket.send(len(file_content).to_bytes(4, byteorder='big'))
-    socket.sendall(file_content)
+def sendMessage(socket, message):
+    socket.send(len(message).to_bytes(4, byteorder='big'))
+    socket.sendall(message)
 
 
 def fetch_certificates(snpguest, cert_dir, proc_model, att_report_path):
@@ -115,7 +115,7 @@ def run_client(host, port, snpguest, report_dir, cert_dir, proc_model, data, gat
     try:
         # receive and write attestation report to file
         report_path = os.path.join(report_dir, "report.bin")
-        report_contents = getFileContents(client)
+        report_contents = receiveMessage(client)
 
         with open(report_path, "wb") as f:
             f.write(report_contents)
@@ -124,7 +124,7 @@ def run_client(host, port, snpguest, report_dir, cert_dir, proc_model, data, gat
         cert_filename = client.recv(1024).decode()
 
         while cert_filename != "\r\n":
-            cert_contents = getFileContents(client)
+            cert_contents = receiveMessage(client)
 
             with open(os.path.join(cert_dir, cert_filename), "wb") as f:
                 f.write(cert_contents)
@@ -139,18 +139,18 @@ def run_client(host, port, snpguest, report_dir, cert_dir, proc_model, data, gat
         with open(data, "rb") as f:
             data_content = f.read()
 
-        client.send(f"DATA {data}".encode())
-        sendFileContents(client, data_content)
+        sendMessage(client, f"DATA {data}".encode())
+        sendMessage(client, data_content)
 
         # send GATK command script
         with open(gatk_script, "rb") as f:
             script_content = f.read()
 
-        client.send("SCRIPT {gatk_script}".encode())
-        sendFileContents(client, script_content)
+        sendMessage(client, f"SCRIPT {gatk_script}".encode())
+        sendMessage(client, script_content)
 
         # get results and write to result.txt
-        result_content = getFileContents(client)
+        result_content = receiveMessage(client)
 
         with open("result.txt", "wb") as f:
             f.write(result_content)
