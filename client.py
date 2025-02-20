@@ -139,7 +139,7 @@ def run_client(host, port, snpguest, report_dir, cert_dir, proc_model, data, gat
         with open(data, "rb") as f:
             data_content = f.read()
 
-        client.send("DATA {data}".encode())
+        client.send(f"DATA {data}".encode())
         sendFileContents(client, data_content)
 
         # send GATK command script

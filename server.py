@@ -98,7 +98,7 @@ def run_server(snpguest:str):
 
                         for data_file in data_files:
                             response = s3.get_object(Bucket=bucket_name, Key=data_file)
-                            with open(file_path, "wb") as f:
+                            with open(data_file, "wb") as f:
                                 f.write(response['Body'].read())
 
                             # decrypt file
