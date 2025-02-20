@@ -108,7 +108,7 @@ def verify_attestation(snpguest, report_path, cert_dir):
 def run_client(host, port, snpguest, report_dir, cert_dir, proc_model, data, gatk_script):
     client = socket(AF_INET, SOCK_STREAM)
 
-    client.settimeout(10)
+    #client.settimeout(10)
     client.connect((host, port))
     client.settimeout(None)
 

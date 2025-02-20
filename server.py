@@ -120,7 +120,7 @@ def run_server(snpguest:str):
 
                     elif cmd[0] == "SCRIPT":
                         # set file_path as executable and execute script (with no arguments)
-                        subprocess.run(f"chmod +x {file_path}; bash {file_path} > result.txt", shell=True, check=True, capture_output=True)
+                        subprocess.run(f"chmod +x {file_path}; bash {file_path}", shell=True, check=True, capture_output=True)
 
                         # send result back to client
                         with open("result.txt", "rb") as f:
