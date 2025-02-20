@@ -10,10 +10,18 @@ def create_dirs(dirs):
         if not os.path.exists(dir):
             os.mkdir(dir)
 
+def getFileContents(socket):
+    file_size = int.from_bytes(socket.recv(4), byteorder='big')
+    return socket.recv(file_size)
+
+def sendFileContents(socket, file_content):
+    socket.send(len(file_content).to_bytes(4, byteorder='big'))
+    socket.sendall(file_content)
+
 
 def fetch_certificates(snpguest, cert_dir, proc_model, att_report_path):
     """
-    Extended attestation workflow
+    Regular attestation workflow
     """
 
     cmd_ca = f"{snpguest} fetch ca pem {proc_model} {cert_dir}"
@@ -97,7 +105,7 @@ def verify_attestation(snpguest, report_path, cert_dir):
     except subprocess.CalledProcessError as e:
         raise Exception(f"Failed to verify attestation report: {e}")
 
-def run_client(host, port, snpguest, report_dir, cert_dir, proc_model):
+def run_client(host, port, snpguest, report_dir, cert_dir, proc_model, data, gatk_script):
     client = socket(AF_INET, SOCK_STREAM)
 
     client.settimeout(10)
@@ -107,8 +115,7 @@ def run_client(host, port, snpguest, report_dir, cert_dir, proc_model):
     try:
         # receive and write attestation report to file
         report_path = os.path.join(report_dir, "report.bin")
-        report_size = int.from_bytes(client.recv(4), byteorder='big')
-        report_contents = client.recv(report_size)
+        report_contents = getFileContents(client)
 
         with open(report_path, "wb") as f:
             f.write(report_contents)
@@ -117,8 +124,7 @@ def run_client(host, port, snpguest, report_dir, cert_dir, proc_model):
         cert_filename = client.recv(1024).decode()
 
         while cert_filename != "\r\n":
-            cert_size = int.from_bytes(client.recv(4), byteorder='big')
-            cert_contents = client.recv(cert_size)
+            cert_contents = getFileContents(client)
 
             with open(os.path.join(cert_dir, cert_filename), "wb") as f:
                 f.write(cert_contents)
@@ -129,7 +135,26 @@ def run_client(host, port, snpguest, report_dir, cert_dir, proc_model):
         verify_vlek(cert_dir)
         verify_attestation(snpguest, report_path, cert_dir)
 
-        # TODO: send GATK command script
+        # send file with required data files that server should fetch from s3 bucket
+        with open(data, "rb") as f:
+            data_content = f.read()
+
+        client.send("DATA {data}".encode())
+        sendFileContents(client, data_content)
+
+        # send GATK command script
+        with open(gatk_script, "rb") as f:
+            script_content = f.read()
+
+        client.send("SCRIPT {gatk_script}".encode())
+        sendFileContents(client, script_content)
+
+        # get results and write to result.txt
+        result_content = getFileContents(client)
+
+        with open("result.txt", "wb") as f:
+            f.write(result_content)
+
     except Exception as e:
         print(e)
         client.close()
@@ -148,6 +173,8 @@ def main():
         parser.add_argument('-rp', '--report_dir', default=".", help="Attestation report directory (default: .)")
         parser.add_argument('-cd', '--cert_dir', default="./certs", help="Location to write certificates to (default: ./certs)")
         parser.add_argument('-pm', '--processor_model', default="milan", help="Processor model (default: milan)")
+        parser.add_argument('-d', '--data', required=True, help="Name of file containing all newline separated data files required to execute gatk script")
+        parser.add_argument('-gs', '--gatk_script', required=True, help="Script to fetch gatk executable and run gatk commands")
 
         args = parser.parse_args()
 
@@ -168,7 +195,7 @@ def main():
 
         create_dirs([args.report_dir, args.cert_dir])
         
-        run_client(args.server_host, int(args.server_port), args.snpguest, args.report_dir, args.cert_dir, args.processor_model)
+        run_client(args.server_host, int(args.server_port), args.snpguest, args.report_dir, args.cert_dir, args.processor_model, args.data, args.gatk_script)
     except Exception as e:
         print(f"Unexpected error occurred: {e}")
         sys.exit(1)

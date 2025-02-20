@@ -3,7 +3,14 @@ import os
 import subprocess
 import sys
 
+import boto3
+
 from socket import *
+
+def sendFileContents(socket, file_content):
+    socket.send(len(file_content).to_bytes(4, byteorder='big'))
+    socket.sendall(file_content)
+    
 
 def generate_certificates(snpguest: str):
     cert_dir = "./certs"
@@ -12,7 +19,7 @@ def generate_certificates(snpguest: str):
         os.mkdir(cert_dir)
 
     try:
-        subprocess.run(f"{snpguest} certificates PEM {cert_dir}", shell=True, check=True, capture_output=True)
+        subprocess.run(f"sudo {snpguest} certificates PEM {cert_dir}", shell=True, check=True, capture_output=True)
     except subprocess.CalledProcessError as e:
         raise Exception(f"Failed to generate certificates: {e}")
 
@@ -38,6 +45,9 @@ def run_server(snpguest:str):
     print(f"SERVER_HOST={gethostname()}")
     print(f"SERVER_PORT={server.getsockname()[1]}")
 
+    s3 = boto3.client('s3')
+    bucket_name = "gatk-amd-genomics-test-data"
+
     try:
         while True:
             connection, address = server.accept()
@@ -51,33 +61,63 @@ def run_server(snpguest:str):
                     report_content = f.read()
 
                 # Send the length of the attestation report to the client
-                connection.send(len(report_content).to_bytes(4, byteorder='big'))
-                # Send the attestation report to the client
-                connection.sendall(report_content)
+                sendFileContents(connection, report_content)
 
                 # generate and send certificates
                 cert_dir = generate_certificates(snpguest)
 
                 for cert_file in os.listdir(cert_dir):
-                    with open(os.path.join(cert_file), "rb") as f:
+                    with open(os.path.join(cert_dir, cert_file), "rb") as f:
                         cert_content = f.read()
 
                     connection.send(cert_file.encode())
-                    connection.send(len(cert_content).to_bytes(4, byteorder='big'))
-                    connection.sendall(cert_content)
+                    sendFileContents(connection, cert_content)
                 
                 connection.send("\r\n".encode())
 
                 while True:
                     # listen for client requests until there are no more
-                    client_msg = connection.recv(1024)
+                    cmd = connection.recv(1024).decode().split()
+                    file_path = ''
 
-                    if not client_msg:
+                    if len(cmd) < 2 or cmd[0] not in ["DATA", "SCRIPT"]:
                         break
+                    
+                    if cmd[0] in ["DATA", "SCRIPT"]:
+                        file_path = cmd[1]
+                        file_size = int.from_bytes(connection.recv(4), byteorder='big')
+                        file_contents = connection.recv(file_size)
+
+                        with open(file_path, "wb") as f:
+                            f.write(file_contents)
+
+                    if cmd[0] == "DATA":
+                        # fetch data files specified in file_path from s3
+                        with open(file_path, "r") as f:
+                            data_files = f.readlines()
+
+                        for data_file in data_files:
+                            response = s3.get_object(Bucket=bucket_name, Key=data_file)
+                            with open(file_path, "w") as f:
+                                f.write(response['Body'].read())
+
+                            # decrypt file
+                            subprocess.run(f"gpg --batch --output {data_file} --passphrase gatk2025 --decrypt {data_file}.gpg", shell=True, check=True)
+
+                    elif cmd[0] == "SCRIPT":
+                        # set file_path as executable and execute script (with no arguments)
+                        subprocess.run(f"chmod +x {file_path}; bash {file_path} > result.txt", shell=True, check=True, capture_output=True)
+
+                        # send result back to client
+                        with open("result.txt", "rb") as f:
+                            result_content = f.read()
+
+                        sendFileContents(connection, result_content)
 
             except Exception as e:
                 print(e)
 
+            # TODO: remove all files created for client before closing connection
             connection.close()
     except Exception as e:
         print(e)
