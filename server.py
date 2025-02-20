@@ -102,7 +102,7 @@ def run_server(snpguest:str):
                                 f.write(response['Body'].read())
 
                             # decrypt file
-                            subprocess.run(f"gpg --batch --output {data_file} --passphrase gatk2025 --decrypt {data_file}.gpg", shell=True, check=True)
+                            subprocess.run(f"gpg --batch --output {data_file[:-4]} --passphrase gatk2025 --decrypt {data_file}", shell=True, check=True)
 
                     elif cmd[0] == "SCRIPT":
                         # set file_path as executable and execute script (with no arguments)
