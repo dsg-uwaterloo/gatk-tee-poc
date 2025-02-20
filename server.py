@@ -106,6 +106,8 @@ def run_server(snpguest:str):
 
                             # decrypt file
                             subprocess.run(f"gpg --batch --output {data_file[:-4]} --passphrase gatk2025 --decrypt {data_file}", shell=True, check=True)
+                        
+                        print(f"Finished reading and decrypting data files in {file_path}")
 
                     elif cmd[0] == "SCRIPT":
                         # set file_path as executable and execute script (with no arguments)
@@ -116,6 +118,7 @@ def run_server(snpguest:str):
                             result_content = f.read()
 
                         sendMessage(connection, result_content)
+                        print(f"Finished running script {file_path}")
 
             except Exception as e:
                 print(e)
