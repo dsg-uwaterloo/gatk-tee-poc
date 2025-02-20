@@ -52,6 +52,8 @@ def run_server(snpguest:str):
     s3 = boto3.client('s3')
     bucket_name = "gatk-amd-genomics-test-data"
 
+    client_fs_base = "client"
+
     try:
         while True:
             connection, address = server.accept()
@@ -88,7 +90,7 @@ def run_server(snpguest:str):
                         break
                     
                     if cmd[0] in ["DATA", "SCRIPT"]:
-                        file_path = cmd[1]
+                        file_path = os.path.join(client_fs_base, cmd[1])
                         file_contents = receiveMessage(connection)
 
                         with open(file_path, "wb") as f:

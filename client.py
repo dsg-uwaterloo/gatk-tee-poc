@@ -139,14 +139,14 @@ def run_client(host, port, snpguest, report_dir, cert_dir, proc_model, data, gat
         with open(data, "rb") as f:
             data_content = f.read()
 
-        sendMessage(client, f"DATA {data}".encode())
+        sendMessage(client, f"DATA {os.path.basename(data)}".encode())
         sendMessage(client, data_content)
 
         # send GATK command script
         with open(gatk_script, "rb") as f:
             script_content = f.read()
 
-        sendMessage(client, f"SCRIPT {gatk_script}".encode())
+        sendMessage(client, f"SCRIPT {os.path.basename(gatk_script)}".encode())
         sendMessage(client, script_content)
 
         # get results and write to result.txt
