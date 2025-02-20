@@ -81,7 +81,7 @@ def run_server(snpguest:str):
 
                 while True:
                     # listen for client requests until there are no more
-                    cmd = receiveMessage(connection).split()
+                    cmd = receiveMessage(connection).decode().split()
                     file_path = ''
 
                     if len(cmd) < 2 or cmd[0] not in ["DATA", "SCRIPT"]:
