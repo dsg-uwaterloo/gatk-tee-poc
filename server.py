@@ -7,17 +7,33 @@ import pathlib
 
 import boto3
 
+from ssl import *
 from socket import *
 
+# sends the length of the message followed by the message
 def sendMessage(socket, message):
     socket.send(len(message).to_bytes(4, byteorder='big'))
     socket.sendall(message)
+    return
 
+# receives the length of the message followed by the message
 def receiveMessage(socket):
     message_size = int.from_bytes(socket.recv(4), byteorder='big')
     return socket.recv(message_size)
-    
 
+# generate the private key for ssl
+def generate_private_key(key_path):
+  if not os.path.exists(key_path):
+    subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-out", key_path])
+  return
+
+# generate self-signed certificate for ssl using the private key
+def generate_self_signed_cert(key_path, cert_path, common_name):
+  if not os.path.exists(cert_path):
+    subprocess.run(["openssl", "req", "-new", "-x509", "-key", key_path, "-out", cert_path, "-subj", "/CN="+common_name])
+  return
+    
+# generates certificates for attestation
 def generate_certificates(snpguest: str):
     cert_dir = "./certs"
 
@@ -31,6 +47,7 @@ def generate_certificates(snpguest: str):
 
     return cert_dir
 
+# generates attestation report
 def generate_attestation_report(snpguest: str):
     report_file = "report.bin"
 
@@ -41,15 +58,19 @@ def generate_attestation_report(snpguest: str):
 
     return report_file
 
-def run_server(snpguest:str):
+def run_server(snpguest: str, key_path: str, self_cert_path: str):
     port = 8080
 
     server = socket(AF_INET, SOCK_STREAM)
     server.bind(('', port))
     server.listen(10)
 
+    context = SSLContext(PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(self_cert_path, key_path)
+    sserver = context.wrap_socket(server, server_side=True)
+
     print(f"SERVER_HOST={gethostname()}")
-    print(f"SERVER_PORT={server.getsockname()[1]}")
+    print(f"SERVER_PORT={sserver.getsockname()[1]}")
 
     s3 = boto3.client('s3')
     bucket_name = "gatk-amd-genomics-test-data"
@@ -58,7 +79,7 @@ def run_server(snpguest:str):
 
     try:
         while True:
-            connection, address = server.accept()
+            connection, address = sserver.accept()
             if not os.path.exists(client_fs_base):
                 os.mkdir(client_fs_base)
 
@@ -81,6 +102,7 @@ def run_server(snpguest:str):
                         cert_content = f.read()
 
                     connection.send(cert_file.encode())
+                    sendMessage(connection, cert_file)
                     sendMessage(connection, cert_content)
                 
                 connection.send("\r\n".encode())
@@ -133,7 +155,7 @@ def run_server(snpguest:str):
             except Exception as e:
                 print(e)
 
-            # TODO: remove all files created for client before closing connection
+            # remove all files created for client before closing connection
             if os.getcwd() == client_fs_base:
                 os.chdir("../")
             shutil.rmtree(pathlib.Path(client_fs_base))
@@ -148,8 +170,22 @@ def main():
         parser = argparse.ArgumentParser()
 
         parser.add_argument('-sg', '--snpguest', default=None, help="Location of the snpguest utility executable (default: fetches and builds snpguest from source)")
+        parser.add_argument('-s', '--secrets_dir', default="~/secrets", help="Common name for generating self-signed certificate (default: ~/secrets)")
+        parser.add_argument('-kf', '--key_file', default="server.key", help="Private key file (default: server.key)")
+        parser.add_argument('-cf', '--cert_file', default="server.pem", help="Self-signed certificate file (default: server.pem)")
+        parser.add_argument('-cn', '--common_name', default="localhost", help="Common name for generating self-signed certificate (default: localhost)")
 
         args = parser.parse_args()
+
+        # generate private key and certificates for ssl
+        secrets_dir = os.path.expand(args.secret_dir)
+        if not os.path.exists(secrets_dir):
+            os.mkdir(secrets_dir)
+
+        key_path = os.path.join(secrets_dir, args.key_file)
+        cert_path = os.path.expanduser(secrets_dir, args.cert_file)
+        generate_private_key(key_path)
+        generate_self_signed_cert(key_path, cert_path, args.common_name)
         
         if not args.snpguest:
             try:
@@ -166,7 +202,7 @@ def main():
         elif not os.path.isfile(args.snpguest()):
             print(f"Cannot find file {args.snpguest()}.")
         
-        run_server(args.snpguest)
+        run_server(args.snpguest, key_path, cert_path)
     except Exception as e:
         print(f"Unexpected error occurred: {e}")
         sys.exit(1)

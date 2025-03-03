@@ -2,24 +2,38 @@ import argparse
 import os
 import subprocess
 import sys
+import shutil
+import pathlib
 
 from socket import *
+from ssl import *
 
 def create_dirs(dirs):
     for dir in dirs:
         if not os.path.exists(dir):
             os.mkdir(dir)
 
-def receiveMessage(socket):
+def remove_dirs(dirs):
+    for dir in dirs:
+        if os.path.exists(dir):
+            shutil.rmtree(pathlib.Path(dir))
+
+def receive_message(socket):
     message_size = int.from_bytes(socket.recv(4), byteorder='big')
     return socket.recv(message_size)
 
-def sendMessage(socket, message):
+def send_message(socket, message):
     socket.send(len(message).to_bytes(4, byteorder='big'))
     socket.sendall(message)
 
+def fetch_server_certificate(socket, server_cert_file):
+    server_cert_content = receive_message(socket)
 
-def fetch_certificates(snpguest, cert_dir, proc_model, att_report_path):
+    with open(server_cert_file, 'wb') as f:
+        f.write(server_cert_content)
+    return
+
+def fetch_snp_certificates(snpguest, cert_dir, proc_model, att_report_path):
     """
     Regular attestation workflow
     """
@@ -46,7 +60,7 @@ def fetch_certificates(snpguest, cert_dir, proc_model, att_report_path):
     except subprocess.CalledProcessError as e:
         raise Exception(f"Failed to fetch certificates: {e}")
 
-def verify_certificates(snpguest, cert_dir):
+def verify_snp_certificates(snpguest, cert_dir):
     """
     Regular attestation workflow
     """
@@ -105,31 +119,37 @@ def verify_attestation(snpguest, report_path, cert_dir):
     except subprocess.CalledProcessError as e:
         raise Exception(f"Failed to verify attestation report: {e}")
 
-def run_client(host, port, snpguest, report_dir, cert_dir, proc_model, data_path, gatk_script, result_path):
+
+def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, cert_dir, data_path, gatk_script, result_path):
     client = socket(AF_INET, SOCK_STREAM)
 
     #client.settimeout(10)
-    client.connect((host, port))
-    client.settimeout(None)
+    client.connect((server_host, server_port))
+    #client.settimeout(None)
+
+    fetch_server_certificate(client, root_cert_path)
+    context = SSLContext(PROTOCOL_TLS_CLIENT)
+    context.load_verify_locations(root_cert_path)
+    sclient = context.wrap_socket(client, server_host)
 
     try:
         # receive and write attestation report to file
         report_path = os.path.join(report_dir, "report.bin")
-        report_contents = receiveMessage(client)
+        report_contents = receive_message(sclient)
 
         with open(report_path, "wb") as f:
             f.write(report_contents)
 
         # get certificates
-        cert_filename = client.recv(1024).decode()
+        cert_filename = receive_message(sclient)
 
         while cert_filename != "\r\n":
-            cert_contents = receiveMessage(client)
+            cert_contents = receive_message(sclient)
 
             with open(os.path.join(cert_dir, cert_filename), "wb") as f:
                 f.write(cert_contents)
 
-            cert_filename = client.recv(1024).decode()
+            cert_filename = receive_message(sclient)
 
         #fetch_certificates(snpguest, cert_dir, proc_model, report_path)
         verify_vlek(cert_dir)
@@ -139,18 +159,18 @@ def run_client(host, port, snpguest, report_dir, cert_dir, proc_model, data_path
         with open(data_path, "rb") as f:
             data_content = f.read()
 
-        sendMessage(client, f"DATA {os.path.basename(data_path)}".encode())
-        sendMessage(client, data_content)
+        send_message(sclient, f"DATA {os.path.basename(data_path)}".encode())
+        send_message(sclient, data_content)
 
         # send GATK command script
         with open(gatk_script, "rb") as f:
             script_content = f.read()
 
-        sendMessage(client, f"SCRIPT {os.path.basename(gatk_script)} {result_path}".encode())
-        sendMessage(client, script_content)
+        send_message(sclient, f"SCRIPT {os.path.basename(gatk_script)} {result_path}".encode())
+        send_message(sclient, script_content)
 
         # get results and write to result_path
-        result_content = receiveMessage(client)
+        result_content = receive_message(sclient)
 
         with open(result_path, "wb") as f:
             f.write(result_content)
@@ -171,10 +191,11 @@ def main():
 
         parser.add_argument('-sh', '--server_host', required=True, help="Machine that the server is running on")
         parser.add_argument('-sp', '--server_port', default=8080, help="Server port number (default: 8080)")
+        parser.add_argument('-rf', '--root_cert_file', default="server.pem", help="Trusted root certificate base (default: server.pem)")
         parser.add_argument('-sg', '--snpguest', default=None, help="Location of the snpguest utility executable (default: fetches and builds snpguest from source)")
         parser.add_argument('-rd', '--report_dir', default=".", help="Attestation report directory (default: .)")
         parser.add_argument('-cd', '--cert_dir', default="./certs", help="Location to write certificates to (default: ./certs)")
-        parser.add_argument('-pm', '--processor_model', default="milan", help="Processor model (default: milan)")
+        #parser.add_argument('-pm', '--processor_model', default="milan", help="Processor model (default: milan)")
         parser.add_argument('-d', '--data', required=True, help="Name of file containing all newline separated data files required to execute gatk script")
         parser.add_argument('-gs', '--gatk_script', required=True, help="Script to fetch gatk executable and run gatk commands")
         parser.add_argument('-r', '--result', required=True, help="Name of file that results of executing gatk_script will be stored in relative to location of gatk_script")
@@ -197,8 +218,8 @@ def main():
             print(f"Cannot find executable {args.snpguest}.")
 
         create_dirs([args.report_dir, args.cert_dir])
-        
-        run_client(args.server_host, int(args.server_port), args.snpguest, args.report_dir, args.cert_dir, args.processor_model, args.data, args.gatk_script, args.result)
+        run_client(args.server_host, int(args.server_port), os.path.join(args.cert_dir, args.root_cert_file), args.snpguest, args.report_dir, args.cert_dir, args.data, args.gatk_script, args.result)
+        remove_dirs([args.report_dir, args.cert_dir])
     except Exception as e:
         print(f"Unexpected error occurred: {e}")
         sys.exit(1)
