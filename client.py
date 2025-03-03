@@ -33,18 +33,6 @@ def fetch_server_certificate(socket, server_cert_file):
         f.write(server_cert_content)
     return
 
-# generate the private key for ssl
-def generate_private_key(key_path):
-  if not os.path.exists(key_path):
-    subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-out", key_path])
-  return
-
-# generate self-signed certificate for ssl using the private key
-def generate_self_signed_cert(key_path, cert_path, common_name):
-  if not os.path.exists(cert_path):
-    subprocess.run(["openssl", "req", "-new", "-x509", "-key", key_path, "-out", cert_path, "-subj", "/CN="+common_name])
-  return
-
 def fetch_snp_certificates(snpguest, cert_dir, proc_model, att_report_path):
     """
     Regular attestation workflow
@@ -153,7 +141,7 @@ def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, c
             f.write(report_contents)
 
         # get certificates
-        cert_filename = receive_message(client_ssock)
+        cert_filename = receive_message(client_ssock).decode()
 
         while cert_filename != "\r\n":
             cert_contents = receive_message(client_ssock)
@@ -161,7 +149,7 @@ def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, c
             with open(os.path.join(cert_dir, cert_filename), "wb") as f:
                 f.write(cert_contents)
 
-            cert_filename = receive_message(client_ssock)
+            cert_filename = receive_message(client_ssock).decode()
 
         #fetch_certificates(snpguest, cert_dir, proc_model, report_path)
         verify_vlek(cert_dir)
@@ -207,20 +195,12 @@ def main():
         parser.add_argument('-sg', '--snpguest', default=None, help="Location of the snpguest utility executable (default: fetches and builds snpguest from source)")
         parser.add_argument('-rd', '--report_dir', default=".", help="Attestation report directory (default: .)")
         parser.add_argument('-cd', '--cert_dir', default="./certs", help="Location to write certificates to (default: ./certs)")
-        parser.add_argument('-kf', '--key_file', default="client.key", help="Private key file (default: client.key)")
-        parser.add_argument('-cf', '--cert_file', default="client.pem", help="Self-signed certificate file (default: client.pem)")
-        parser.add_argument('-cn', '--common_name', default="localhost", help="Common name for generating self-signed certificate (default: localhost)")
         #parser.add_argument('-pm', '--processor_model', default="milan", help="Processor model (default: milan)")
         parser.add_argument('-d', '--data', required=True, help="Name of file containing all newline separated data files required to execute gatk script")
         parser.add_argument('-gs', '--gatk_script', required=True, help="Script to fetch gatk executable and run gatk commands")
         parser.add_argument('-r', '--result', required=True, help="Name of file that results of executing gatk_script will be stored in relative to location of gatk_script")
 
         args = parser.parse_args()
-
-        key_path = os.path.join(args.cert_dir, args.key_file)
-        cert_path = os.path.join(args.cert_dir, args.cert_file)
-        generate_private_key(key_path)
-        generate_self_signed_cert(key_path, cert_path, args.common_name)
 
         if not args.snpguest:
             try:

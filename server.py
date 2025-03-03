@@ -91,11 +91,10 @@ def handle_client_connection(client_ssock, snpguest):
             with open(os.path.join(cert_dir, cert_file), "rb") as f:
                 cert_content = f.read()
 
-            client_ssock.send(cert_file.encode())
-            send_message(client_ssock, cert_file)
+            send_message(client_ssock, cert_file.encode())
             send_message(client_ssock, cert_content)
         
-        client_ssock.send("\r\n".encode())
+        send_message(client_ssock, "\r\n".encode())
 
         # change into client directory
         os.chdir(CLIENT_FS_BASE);
@@ -187,7 +186,7 @@ def main():
         parser.add_argument('-s', '--secrets_dir', default="~/secrets", help="Common name for generating self-signed certificate (default: ~/secrets)")
         parser.add_argument('-kf', '--key_file', default="server.key", help="Private key file (default: server.key)")
         parser.add_argument('-cf', '--cert_file', default="server.pem", help="Self-signed certificate file (default: server.pem)")
-        parser.add_argument('-cn', '--common_name', default="localhost", help="Common name for generating self-signed certificate (default: localhost)")
+        parser.add_argument('-cn', '--common_name', default=gethostname(), help=f"Common name for generating self-signed certificate (default: {gethostname()})")
 
         args = parser.parse_args()
 
