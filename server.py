@@ -11,15 +11,20 @@ from ssl import *
 from socket import *
 
 # sends the length of the message followed by the message
-def sendMessage(socket, message):
+def send_message(socket, message):
     socket.send(len(message).to_bytes(4, byteorder='big'))
     socket.sendall(message)
     return
 
 # receives the length of the message followed by the message
-def receiveMessage(socket):
+def receive_message(socket):
     message_size = int.from_bytes(socket.recv(4), byteorder='big')
     return socket.recv(message_size)
+
+# send self-signed certificate
+def send_self_cert(socket, self_cert_path):
+    with open(self_cert_path, "rb") as f:
+        send_message(socket, f.read())
 
 # generate the private key for ssl
 def generate_private_key(key_path):
@@ -58,112 +63,117 @@ def generate_attestation_report(snpguest: str):
 
     return report_file
 
-def run_server(snpguest: str, key_path: str, self_cert_path: str):
-    port = 8080
-
-    server = socket(AF_INET, SOCK_STREAM)
-    server.bind(('', port))
-    server.listen(10)
+def handle_client_connection(client_sock, snpguest, key_path, self_cert_path):
+    # send self-signed certificate
+    send_self_cert(client_sock, self_cert_path)
 
     context = SSLContext(PROTOCOL_TLS_SERVER)
     context.load_cert_chain(self_cert_path, key_path)
-    sserver = context.wrap_socket(server, server_side=True)
-
-    print(f"SERVER_HOST={gethostname()}")
-    print(f"SERVER_PORT={sserver.getsockname()[1]}")
+    client_ssock = context.wrap_socket(client_sock, server_side=True)
 
     s3 = boto3.client('s3')
     bucket_name = "gatk-amd-genomics-test-data"
 
     client_fs_base = os.path.expanduser("~/client")
+    if not os.path.exists(client_fs_base):
+        os.mkdir(client_fs_base)
 
     try:
+        # AMD SEV-SNP attestation
+        # generate and send attestation
+        report_file = generate_attestation_report(snpguest)
+
+        with open(report_file, "rb") as f:
+            report_content = f.read()
+
+        # Send the length of the attestation report to the client
+        send_message(client_ssock, report_content)
+
+        # generate and send certificates
+        cert_dir = generate_certificates(snpguest)
+
+        for cert_file in os.listdir(cert_dir):
+            with open(os.path.join(cert_dir, cert_file), "rb") as f:
+                cert_content = f.read()
+
+            client_ssock.send(cert_file.encode())
+            send_message(client_ssock, cert_file)
+            send_message(client_ssock, cert_content)
+        
+        client_ssock.send("\r\n".encode())
+
+        # change into client directory
+        os.chdir(client_fs_base);
+
         while True:
-            connection, address = sserver.accept()
-            if not os.path.exists(client_fs_base):
-                os.mkdir(client_fs_base)
+            # listen for client requests until there are no more
+            cmd = receive_message(client_ssock).decode().split()
+            file_path = ''
 
-            try:
-                # AMD SEV-SNP attestation
-                # generate and send attestation
-                report_file = generate_attestation_report(snpguest)
+            if len(cmd) < 2 or cmd[0] not in ["DATA", "SCRIPT"]:
+                break
+            
+            if cmd[0] in ["DATA", "SCRIPT"]:
+                file_path = os.path.join(client_fs_base, cmd[1])
+                file_contents = receive_message(client_ssock)
 
-                with open(report_file, "rb") as f:
-                    report_content = f.read()
+                with open(file_path, "wb") as f:
+                    f.write(file_contents)
 
-                # Send the length of the attestation report to the client
-                sendMessage(connection, report_content)
+            if cmd[0] == "DATA":
+                # fetch data files specified in file_path from s3
+                with open(file_path, "r") as f:
+                    data_files = f.readlines()
 
-                # generate and send certificates
-                cert_dir = generate_certificates(snpguest)
+                for data_file in data_files:
+                    response = s3.get_object(Bucket=bucket_name, Key=data_file)
+                    with open(data_file, "wb") as f:
+                        f.write(response['Body'].read())
 
-                for cert_file in os.listdir(cert_dir):
-                    with open(os.path.join(cert_dir, cert_file), "rb") as f:
-                        cert_content = f.read()
-
-                    connection.send(cert_file.encode())
-                    sendMessage(connection, cert_file)
-                    sendMessage(connection, cert_content)
+                    # decrypt file
+                    subprocess.run(f"gpg --batch --output {data_file[:-4]} --passphrase gatk2025 --decrypt {data_file}", shell=True, check=True)
                 
-                connection.send("\r\n".encode())
+                print(f"Finished reading and decrypting data files in {file_path}")
 
-                # change into client directory
-                os.chdir(client_fs_base);
+            elif cmd[0] == "SCRIPT":
+                result_path = cmd[2]
+                # set file_path as executable and execute script (with no arguments)
+                subprocess.run(f"chmod +x {file_path}; bash {file_path}", shell=True, check=True, capture_output=True)
 
-                while True:
-                    # listen for client requests until there are no more
-                    cmd = receiveMessage(connection).decode().split()
-                    file_path = ''
+                # send result back to client
+                with open(os.path.join(client_fs_base, result_path), "rb") as f:
+                    result_content = f.read()
 
-                    if len(cmd) < 2 or cmd[0] not in ["DATA", "SCRIPT"]:
-                        break
-                    
-                    if cmd[0] in ["DATA", "SCRIPT"]:
-                        file_path = os.path.join(client_fs_base, cmd[1])
-                        file_contents = receiveMessage(connection)
+                send_message(client_ssock, result_content)
+                print(f"Finished running script {file_path}")
 
-                        with open(file_path, "wb") as f:
-                            f.write(file_contents)
-
-                    if cmd[0] == "DATA":
-                        # fetch data files specified in file_path from s3
-                        with open(file_path, "r") as f:
-                            data_files = f.readlines()
-
-                        for data_file in data_files:
-                            response = s3.get_object(Bucket=bucket_name, Key=data_file)
-                            with open(data_file, "wb") as f:
-                                f.write(response['Body'].read())
-
-                            # decrypt file
-                            subprocess.run(f"gpg --batch --output {data_file[:-4]} --passphrase gatk2025 --decrypt {data_file}", shell=True, check=True)
-                        
-                        print(f"Finished reading and decrypting data files in {file_path}")
-
-                    elif cmd[0] == "SCRIPT":
-                        result_path = cmd[2]
-                        # set file_path as executable and execute script (with no arguments)
-                        subprocess.run(f"chmod +x {file_path}; bash {file_path}", shell=True, check=True, capture_output=True)
-
-                        # send result back to client
-                        with open(os.path.join(client_fs_base, result_path), "rb") as f:
-                            result_content = f.read()
-
-                        sendMessage(connection, result_content)
-                        print(f"Finished running script {file_path}")
-
-            except Exception as e:
-                print(e)
-
-            # remove all files created for client before closing connection
-            if os.getcwd() == client_fs_base:
-                os.chdir("../")
-            shutil.rmtree(pathlib.Path(client_fs_base))
-            connection.close()
     except Exception as e:
         print(e)
 
-    server.close()
+    # remove all files created for client before closing connection
+    if os.getcwd() == client_fs_base:
+        os.chdir("../")
+    shutil.rmtree(pathlib.Path(client_fs_base))
+    client_sock.close()
+
+def run_server(snpguest: str, key_path: str, self_cert_path: str):
+    port = 8080
+
+    server_sock = socket(AF_INET, SOCK_STREAM)
+    server_sock.bind(('', port))
+    server_sock.listen(10)
+
+    print(f"SERVER_HOST={gethostname()}")
+    print(f"SERVER_PORT={server_sock.getsockname()[1]}")
+
+    try:
+        while True:
+            connection, _ = server_sock.accept()
+            handle_client_connection(connection, snpguest, key_path, self_cert_path)
+    except Exception as e:
+        print(e)
+
+    server_sock.close()
 
 def main():
     try:
@@ -178,12 +188,12 @@ def main():
         args = parser.parse_args()
 
         # generate private key and certificates for ssl
-        secrets_dir = os.path.expand(args.secret_dir)
+        secrets_dir = os.path.expanduser(args.secrets_dir)
         if not os.path.exists(secrets_dir):
             os.mkdir(secrets_dir)
 
         key_path = os.path.join(secrets_dir, args.key_file)
-        cert_path = os.path.expanduser(secrets_dir, args.cert_file)
+        cert_path = os.path.join(secrets_dir, args.cert_file)
         generate_private_key(key_path)
         generate_self_signed_cert(key_path, cert_path, args.common_name)
         

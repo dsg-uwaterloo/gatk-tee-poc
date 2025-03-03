@@ -121,35 +121,35 @@ def verify_attestation(snpguest, report_path, cert_dir):
 
 
 def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, cert_dir, data_path, gatk_script, result_path):
-    client = socket(AF_INET, SOCK_STREAM)
+    client_sock = socket(AF_INET, SOCK_STREAM)
 
     #client.settimeout(10)
-    client.connect((server_host, server_port))
+    client_sock.connect((server_host, server_port))
     #client.settimeout(None)
 
-    fetch_server_certificate(client, root_cert_path)
+    fetch_server_certificate(client_sock, root_cert_path)
     context = SSLContext(PROTOCOL_TLS_CLIENT)
     context.load_verify_locations(root_cert_path)
-    sclient = context.wrap_socket(client, server_host)
+    client_ssock = context.wrap_socket(client_sock, server_host)
 
     try:
         # receive and write attestation report to file
         report_path = os.path.join(report_dir, "report.bin")
-        report_contents = receive_message(sclient)
+        report_contents = receive_message(client_ssock)
 
         with open(report_path, "wb") as f:
             f.write(report_contents)
 
         # get certificates
-        cert_filename = receive_message(sclient)
+        cert_filename = receive_message(client_ssock)
 
         while cert_filename != "\r\n":
-            cert_contents = receive_message(sclient)
+            cert_contents = receive_message(client_ssock)
 
             with open(os.path.join(cert_dir, cert_filename), "wb") as f:
                 f.write(cert_contents)
 
-            cert_filename = receive_message(sclient)
+            cert_filename = receive_message(client_ssock)
 
         #fetch_certificates(snpguest, cert_dir, proc_model, report_path)
         verify_vlek(cert_dir)
@@ -159,18 +159,18 @@ def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, c
         with open(data_path, "rb") as f:
             data_content = f.read()
 
-        send_message(sclient, f"DATA {os.path.basename(data_path)}".encode())
-        send_message(sclient, data_content)
+        send_message(client_ssock, f"DATA {os.path.basename(data_path)}".encode())
+        send_message(client_ssock, data_content)
 
         # send GATK command script
         with open(gatk_script, "rb") as f:
             script_content = f.read()
 
-        send_message(sclient, f"SCRIPT {os.path.basename(gatk_script)} {result_path}".encode())
-        send_message(sclient, script_content)
+        send_message(client_ssock, f"SCRIPT {os.path.basename(gatk_script)} {result_path}".encode())
+        send_message(client_ssock, script_content)
 
         # get results and write to result_path
-        result_content = receive_message(sclient)
+        result_content = receive_message(client_ssock)
 
         with open(result_path, "wb") as f:
             f.write(result_content)
@@ -179,10 +179,10 @@ def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, c
 
     except Exception as e:
         print(e)
-        client.close()
+        client_sock.close()
         sys.exit(1)
     
-    client.close()
+    client_sock.close()
 
 
 def main():
