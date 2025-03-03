@@ -33,6 +33,18 @@ def fetch_server_certificate(socket, server_cert_file):
         f.write(server_cert_content)
     return
 
+# generate the private key for ssl
+def generate_private_key(key_path):
+  if not os.path.exists(key_path):
+    subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-out", key_path])
+  return
+
+# generate self-signed certificate for ssl using the private key
+def generate_self_signed_cert(key_path, cert_path, common_name):
+  if not os.path.exists(cert_path):
+    subprocess.run(["openssl", "req", "-new", "-x509", "-key", key_path, "-out", cert_path, "-subj", "/CN="+common_name])
+  return
+
 def fetch_snp_certificates(snpguest, cert_dir, proc_model, att_report_path):
     """
     Regular attestation workflow
@@ -120,7 +132,7 @@ def verify_attestation(snpguest, report_path, cert_dir):
         raise Exception(f"Failed to verify attestation report: {e}")
 
 
-def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, cert_dir, data_path, gatk_script, result_path):
+def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, cert_dir, data_path, gatk_script, result_path, key_path, self_cert_path):
     client_sock = socket(AF_INET, SOCK_STREAM)
 
     #client.settimeout(10)
@@ -129,8 +141,8 @@ def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, c
 
     fetch_server_certificate(client_sock, root_cert_path)
     context = SSLContext(PROTOCOL_TLS_CLIENT)
-    context.load_verify_locations(root_cert_path)
-    client_ssock = context.wrap_socket(client_sock, sever_hostname=server_host)
+    context.load_verify_locations(self_cert_path)
+    client_ssock = context.wrap_socket(client_sock, server_hostname=server_host)
 
     try:
         # receive and write attestation report to file
@@ -195,12 +207,20 @@ def main():
         parser.add_argument('-sg', '--snpguest', default=None, help="Location of the snpguest utility executable (default: fetches and builds snpguest from source)")
         parser.add_argument('-rd', '--report_dir', default=".", help="Attestation report directory (default: .)")
         parser.add_argument('-cd', '--cert_dir', default="./certs", help="Location to write certificates to (default: ./certs)")
+        parser.add_argument('-kf', '--key_file', default="client.key", help="Private key file (default: client.key)")
+        parser.add_argument('-cf', '--cert_file', default="client.pem", help="Self-signed certificate file (default: client.pem)")
+        parser.add_argument('-cn', '--common_name', default="localhost", help="Common name for generating self-signed certificate (default: localhost)")
         #parser.add_argument('-pm', '--processor_model', default="milan", help="Processor model (default: milan)")
         parser.add_argument('-d', '--data', required=True, help="Name of file containing all newline separated data files required to execute gatk script")
         parser.add_argument('-gs', '--gatk_script', required=True, help="Script to fetch gatk executable and run gatk commands")
         parser.add_argument('-r', '--result', required=True, help="Name of file that results of executing gatk_script will be stored in relative to location of gatk_script")
 
         args = parser.parse_args()
+
+        key_path = os.path.join(args.cert_dir, args.key_file)
+        cert_path = os.path.join(args.cert_dir, args.cert_file)
+        generate_private_key(key_path)
+        generate_self_signed_cert(key_path, cert_path, args.common_name)
 
         if not args.snpguest:
             try:
@@ -218,7 +238,7 @@ def main():
             print(f"Cannot find executable {args.snpguest}.")
 
         create_dirs([args.report_dir, args.cert_dir])
-        run_client(args.server_host, int(args.server_port), os.path.join(args.cert_dir, args.root_cert_file), args.snpguest, args.report_dir, args.cert_dir, args.data, args.gatk_script, args.result)
+        run_client(args.server_host, int(args.server_port), os.path.join(args.cert_dir, args.root_cert_file), args.snpguest, args.report_dir, args.cert_dir, args.data, args.gatk_script, args.result, key_path, cert_path)
         remove_dirs([args.report_dir, args.cert_dir])
     except Exception as e:
         print(f"Unexpected error occurred: {e}")
