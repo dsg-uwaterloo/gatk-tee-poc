@@ -14,8 +14,10 @@ def create_dirs(dirs):
             os.mkdir(dir)
 
 def remove_dirs(dirs):
+    cwd = os.getcwd()
+
     for dir in dirs:
-        if os.path.exists(dir):
+        if os.path.exists(dir) and os.path.abspath(dir) != cwd:
             shutil.rmtree(pathlib.Path(dir))
 
 def receive_message(socket):
@@ -120,16 +122,14 @@ def verify_attestation(snpguest, report_path, cert_dir):
         raise Exception(f"Failed to verify attestation report: {e}")
 
 
-def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, cert_dir, data_path, gatk_script, result_path, key_path, self_cert_path):
+def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, cert_dir, data_path, gatk_script, result_path):
     client_sock = socket(AF_INET, SOCK_STREAM)
 
-    #client.settimeout(10)
     client_sock.connect((server_host, server_port))
-    #client.settimeout(None)
 
     fetch_server_certificate(client_sock, root_cert_path)
     context = SSLContext(PROTOCOL_TLS_CLIENT)
-    context.load_verify_locations(self_cert_path)
+    context.load_verify_locations(root_cert_path)
     client_ssock = context.wrap_socket(client_sock, server_hostname=server_host)
 
     try:
@@ -151,7 +151,6 @@ def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, c
 
             cert_filename = receive_message(client_ssock).decode()
 
-        #fetch_certificates(snpguest, cert_dir, proc_model, report_path)
         verify_vlek(cert_dir)
         verify_attestation(snpguest, report_path, cert_dir)
 
@@ -178,30 +177,30 @@ def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, c
         print(f"Results received and stored in {result_path}")
 
     except Exception as e:
-        print(e)
-        client_sock.close()
-        sys.exit(1)
+        client_ssock.close()
+        raise Exception(e)
     
-    client_sock.close()
+    client_ssock.close()
 
 
 def main():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('-sh', '--server_host', required=True, help="Machine that the server is running on")
+    parser.add_argument('-sp', '--server_port', default=8080, help="Server port number (default: 8080)")
+    parser.add_argument('-rf', '--root_cert_file', default="server.pem", help="Trusted root certificate base (default: server.pem)")
+    parser.add_argument('-sg', '--snpguest', default=None, help="Location of the snpguest utility executable (default: fetches and builds snpguest from source)")
+    parser.add_argument('-rd', '--report_dir', default=".", help="Attestation report directory (default: .)")
+    parser.add_argument('-cd', '--cert_dir', default="./certs", help="Location to write certificates to (default: ./certs)")
+    parser.add_argument('-d', '--data', required=True, help="Name of file containing all newline separated data files required to execute gatk script")
+    parser.add_argument('-gs', '--gatk_script', required=True, help="Script to fetch gatk executable and run gatk commands")
+    parser.add_argument('-r', '--result', required=True, help="Name of file that results of executing gatk_script will be stored in relative to location of gatk_script")
+
+    args = parser.parse_args()
+
+    create_dirs([args.report_dir, args.cert_dir])
+
     try:
-        parser = argparse.ArgumentParser()
-
-        parser.add_argument('-sh', '--server_host', required=True, help="Machine that the server is running on")
-        parser.add_argument('-sp', '--server_port', default=8080, help="Server port number (default: 8080)")
-        parser.add_argument('-rf', '--root_cert_file', default="server.pem", help="Trusted root certificate base (default: server.pem)")
-        parser.add_argument('-sg', '--snpguest', default=None, help="Location of the snpguest utility executable (default: fetches and builds snpguest from source)")
-        parser.add_argument('-rd', '--report_dir', default=".", help="Attestation report directory (default: .)")
-        parser.add_argument('-cd', '--cert_dir', default="./certs", help="Location to write certificates to (default: ./certs)")
-        #parser.add_argument('-pm', '--processor_model', default="milan", help="Processor model (default: milan)")
-        parser.add_argument('-d', '--data', required=True, help="Name of file containing all newline separated data files required to execute gatk script")
-        parser.add_argument('-gs', '--gatk_script', required=True, help="Script to fetch gatk executable and run gatk commands")
-        parser.add_argument('-r', '--result', required=True, help="Name of file that results of executing gatk_script will be stored in relative to location of gatk_script")
-
-        args = parser.parse_args()
-
         if not args.snpguest:
             try:
                 # fetch and build snpguest from source
@@ -217,12 +216,14 @@ def main():
         elif not os.path.isfile(args.snpguest):
             print(f"Cannot find executable {args.snpguest}.")
 
-        create_dirs([args.report_dir, args.cert_dir])
-        run_client(args.server_host, int(args.server_port), os.path.join(args.cert_dir, args.root_cert_file), args.snpguest, args.report_dir, args.cert_dir, args.data, args.gatk_script, args.result, key_path, cert_path)
-        remove_dirs([args.report_dir, args.cert_dir])
+        run_client(args.server_host, int(args.server_port), os.path.join(args.cert_dir, args.root_cert_file), args.snpguest, args.report_dir, args.cert_dir, args.data, args.gatk_script, args.result)
     except Exception as e:
-        print(f"Unexpected error occurred: {e}")
+        print(f"Error: {e}")
+        remove_dirs([args.report_dir, args.cert_dir])
         sys.exit(1)
+
+    # clean-up
+    remove_dirs([args.report_dir, args.cert_dir])
 
 if __name__ == "__main__":
     main()
