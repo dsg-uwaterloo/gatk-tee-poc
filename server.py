@@ -10,6 +10,12 @@ import boto3
 from ssl import *
 from socket import *
 
+# constants
+S3 = boto3.client('s3')
+BUCKET_NAME = "gatk-amd-genomics-test-data"
+
+CLIENT_FS_BASE = os.path.expanduser("~/client")
+
 # sends the length of the message followed by the message
 def send_message(socket, message):
     socket.send(len(message).to_bytes(4, byteorder='big'))
@@ -63,20 +69,9 @@ def generate_attestation_report(snpguest: str):
 
     return report_file
 
-def handle_client_connection(client_sock, snpguest, key_path, self_cert_path):
-    # send self-signed certificate
-    send_self_cert(client_sock, self_cert_path)
-
-    context = SSLContext(PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(self_cert_path, key_path)
-    client_ssock = context.wrap_socket(client_sock, server_side=True)
-
-    s3 = boto3.client('s3')
-    bucket_name = "gatk-amd-genomics-test-data"
-
-    client_fs_base = os.path.expanduser("~/client")
-    if not os.path.exists(client_fs_base):
-        os.mkdir(client_fs_base)
+def handle_client_connection(client_ssock, snpguest):
+    if not os.path.exists(CLIENT_FS_BASE):
+        os.mkdir(CLIENT_FS_BASE)
 
     try:
         # AMD SEV-SNP attestation
@@ -103,7 +98,7 @@ def handle_client_connection(client_sock, snpguest, key_path, self_cert_path):
         client_ssock.send("\r\n".encode())
 
         # change into client directory
-        os.chdir(client_fs_base);
+        os.chdir(CLIENT_FS_BASE);
 
         while True:
             # listen for client requests until there are no more
@@ -114,7 +109,7 @@ def handle_client_connection(client_sock, snpguest, key_path, self_cert_path):
                 break
             
             if cmd[0] in ["DATA", "SCRIPT"]:
-                file_path = os.path.join(client_fs_base, cmd[1])
+                file_path = os.path.join(CLIENT_FS_BASE, cmd[1])
                 file_contents = receive_message(client_ssock)
 
                 with open(file_path, "wb") as f:
@@ -126,7 +121,7 @@ def handle_client_connection(client_sock, snpguest, key_path, self_cert_path):
                     data_files = f.readlines()
 
                 for data_file in data_files:
-                    response = s3.get_object(Bucket=bucket_name, Key=data_file)
+                    response = S3.get_object(Bucket=BUCKET_NAME, Key=data_file)
                     with open(data_file, "wb") as f:
                         f.write(response['Body'].read())
 
@@ -141,7 +136,7 @@ def handle_client_connection(client_sock, snpguest, key_path, self_cert_path):
                 subprocess.run(f"chmod +x {file_path}; bash {file_path}", shell=True, check=True, capture_output=True)
 
                 # send result back to client
-                with open(os.path.join(client_fs_base, result_path), "rb") as f:
+                with open(os.path.join(CLIENT_FS_BASE, result_path), "rb") as f:
                     result_content = f.read()
 
                 send_message(client_ssock, result_content)
@@ -151,11 +146,11 @@ def handle_client_connection(client_sock, snpguest, key_path, self_cert_path):
         print(e)
 
     # remove all files created for client before closing connection
-    if os.getcwd() == client_fs_base:
+    if os.getcwd() == CLIENT_FS_BASE:
         os.chdir("../")
-    shutil.rmtree(pathlib.Path(client_fs_base))
-    client_sock.close()
+    shutil.rmtree(pathlib.Path(CLIENT_FS_BASE))
 
+# run server
 def run_server(snpguest: str, key_path: str, self_cert_path: str):
     port = 8080
 
@@ -166,10 +161,19 @@ def run_server(snpguest: str, key_path: str, self_cert_path: str):
     print(f"SERVER_HOST={gethostname()}")
     print(f"SERVER_PORT={server_sock.getsockname()[1]}")
 
+    context = SSLContext(PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(self_cert_path, key_path)
+
     try:
         while True:
             connection, _ = server_sock.accept()
-            handle_client_connection(connection, snpguest, key_path, self_cert_path)
+            # send self-signed certificate
+            send_self_cert(connection, self_cert_path)
+            client_ssock = context.wrap_socket(connection, server_side=True)
+
+            handle_client_connection(client_ssock, snpguest)
+
+            client_ssock.close()
     except Exception as e:
         print(e)
 

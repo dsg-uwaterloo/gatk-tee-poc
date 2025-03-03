@@ -130,7 +130,7 @@ def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, c
     fetch_server_certificate(client_sock, root_cert_path)
     context = SSLContext(PROTOCOL_TLS_CLIENT)
     context.load_verify_locations(root_cert_path)
-    client_ssock = context.wrap_socket(client_sock, server_host)
+    client_ssock = context.wrap_socket(client_sock, sever_hostname=server_host)
 
     try:
         # receive and write attestation report to file
