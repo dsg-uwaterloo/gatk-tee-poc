@@ -7,25 +7,14 @@ import pathlib
 
 import boto3
 
+from helper import *
 from ssl import *
 from socket import *
 
 # constants
 S3 = boto3.client('s3')
 BUCKET_NAME = "gatk-amd-genomics-test-data"
-
 CLIENT_FS_BASE = os.path.expanduser("~/client")
-
-# sends the length of the message followed by the message
-def send_message(socket, message):
-    socket.send(len(message).to_bytes(4, byteorder='big'))
-    socket.sendall(message)
-    return
-
-# receives the length of the message followed by the message
-def receive_message(socket):
-    message_size = int.from_bytes(socket.recv(4), byteorder='big')
-    return socket.recv(message_size)
 
 # send self-signed certificate
 def send_self_cert(socket, self_cert_path):
@@ -69,6 +58,7 @@ def generate_attestation_report(snpguest: str):
 
     return report_file
 
+# sends attestation and handles requests for each TCP connection
 def handle_client_connection(client_ssock, snpguest):
     if not os.path.exists(CLIENT_FS_BASE):
         os.mkdir(CLIENT_FS_BASE)

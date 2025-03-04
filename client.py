@@ -2,32 +2,12 @@ import argparse
 import os
 import subprocess
 import sys
-import shutil
-import pathlib
 
+from helper import *
 from socket import *
 from ssl import *
 
-def create_dirs(dirs):
-    for dir in dirs:
-        if not os.path.exists(dir):
-            os.mkdir(dir)
-
-def remove_dirs(dirs):
-    cwd = os.getcwd()
-
-    for dir in dirs:
-        if os.path.exists(dir) and os.path.abspath(dir) != cwd:
-            shutil.rmtree(pathlib.Path(dir))
-
-def receive_message(socket):
-    message_size = int.from_bytes(socket.recv(4), byteorder='big')
-    return socket.recv(message_size)
-
-def send_message(socket, message):
-    socket.send(len(message).to_bytes(4, byteorder='big'))
-    socket.sendall(message)
-
+# 
 def fetch_server_certificate(socket, server_cert_file):
     server_cert_content = receive_message(socket)
 
@@ -35,54 +15,6 @@ def fetch_server_certificate(socket, server_cert_file):
         f.write(server_cert_content)
     return
 
-def fetch_snp_certificates(snpguest, cert_dir, proc_model, att_report_path):
-    """
-    Regular attestation workflow
-    """
-
-    cmd_ca = f"{snpguest} fetch ca pem {proc_model} {cert_dir}"
-    cmd_vcek = f"{snpguest} fetch vcek pem {proc_model} {cert_dir} {att_report_path}"
-
-    try:
-        subprocess.run(cmd_ca, shell=True, check=True)
-        subprocess.run(cmd_vcek, shell=True, check=True)
-
-        # Check if the required files exist in the cert_dir
-        required_files = ['ark.pem', 'ask.pem', 'vcek.pem']
-
-        for file in required_files:
-            file_path = os.path.join(cert_dir, file)
-            if os.path.exists(file_path):
-                required_files.remove(file)
-
-        if required_files:
-            raise Exception(f"Error: Failed to retrieve certificates. Missing files: {', '.join(required_files)}")
-
-        print("Certificates acquired successfully.\n")
-    except subprocess.CalledProcessError as e:
-        raise Exception(f"Failed to fetch certificates: {e}")
-
-def verify_snp_certificates(snpguest, cert_dir):
-    """
-    Regular attestation workflow
-    """
-
-    expected_output = [
-        "The AMD ARK was self-signed!",
-        "The AMD ASK was signed by the AMD ARK!",
-        "The VCEK was signed by the AMD ASK!"
-    ]
-
-    try:
-        output = subprocess.check_output(f"{snpguest} verify certs {cert_dir}", shell=True, universal_newlines=True)
-
-        if expected_output != output:
-            raise Exception(f"Certificate validation failed: \n{output}")
-
-        print(f"Certificate validation succeeded: \n{output}")
-    except subprocess.CalledProcessError as e:
-        raise Exception(f"Failed to fetch certificates: {e}")
-    
 def verify_vlek(cert_dir):
     """
     Extended attestation workflow
