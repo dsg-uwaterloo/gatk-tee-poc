@@ -138,7 +138,7 @@ def handle_client_connection(client_ssock, snpguest):
                     file_path = os.path.join(result_dir, filename)
                     if os.path.isfile(file_path):
                         with open(file_path, "rb") as f:
-                            S3.Object(RESULT_BUCKET, os.path.join(s3_dir, filename)).put(Body=f.read())
+                            S3.put_object(Body=f.read(), Bucket=RESULT_BUCKET, Key=os.path.join(s3_dir, filename))
 
                 send_message(client_ssock, s3_dir)
                 print(f"Uploaded results to {s3_dir}")

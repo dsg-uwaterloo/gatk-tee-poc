@@ -101,7 +101,7 @@ def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, c
         send_message(client_ssock, script_content)
 
         # get results and write to result_path
-        s3_result_dir = receive_message(client_ssock)
+        s3_result_dir = receive_message(client_ssock).decode()
 
         print(f"Results received and stored in s3 under {s3_result_dir}")
 
