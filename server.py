@@ -62,8 +62,7 @@ def generate_attestation_report(snpguest: str):
 
 # sends attestation and handles requests for each TCP connection
 def handle_client_connection(client_ssock, snpguest):
-    if not os.path.exists(CLIENT_FS_BASE):
-        os.mkdir(CLIENT_FS_BASE)
+    create_dirs([CLIENT_FS_BASE])
 
     try:
         # AMD SEV-SNP attestation
@@ -140,7 +139,7 @@ def handle_client_connection(client_ssock, snpguest):
                         with open(file_path, "rb") as f:
                             S3.put_object(Body=f.read(), Bucket=RESULT_BUCKET, Key=os.path.join(s3_dir, filename))
 
-                send_message(client_ssock, s3_dir)
+                send_message(client_ssock, s3_dir.encode())
                 print(f"Uploaded results to {s3_dir}")
 
     except Exception as e:
