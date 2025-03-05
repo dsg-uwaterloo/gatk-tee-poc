@@ -123,11 +123,13 @@ def handle_client_connection(client_ssock, snpguest):
 
             elif cmd[0] == "SCRIPT":
                 result_dir = cmd[2]
+                create_dirs([result_dir])
                 # set file_path as executable and execute script (with no arguments)
                 subprocess.run(f"chmod +x {file_path}; bash {file_path}", shell=True, check=True, capture_output=True)
+                print(f"Finished running script {file_path}")
 
                 # create new s3 directory
-                s3_dir = "result-" + random.randint()
+                s3_dir = "result-" + str(random.randint(0, sys.maxsize * 2 + 1))
                 while "Common prefixes" in S3.list_objects(Bucket=RESULT_BUCKET, Prefix=s3_dir, Delimiter='/',MaxKeys=1):
                     s3_dir = "result-" + random.randint()
 
@@ -139,7 +141,7 @@ def handle_client_connection(client_ssock, snpguest):
                             S3.Object(RESULT_BUCKET, os.path.join(s3_dir, filename)).put(Body=f.read())
 
                 send_message(client_ssock, s3_dir)
-                print(f"Finished running script {file_path}")
+                print(f"Uploaded results to {s3_dir}")
 
     except Exception as e:
         print(e)
