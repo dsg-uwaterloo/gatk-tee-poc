@@ -11,4 +11,4 @@ if [ ! -d gatk-${version} ]; then
 fi
 
 cd gatk-${version}
-./gatk ValidateSamFile -I ../NA12878.bam -M SUMMARY > ../result.txt 2>&1
+./gatk ValidateSamFile -I ../NA12878.bam -M SUMMARY > ../results/result.txt 2>&1

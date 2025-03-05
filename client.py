@@ -54,7 +54,7 @@ def verify_attestation(snpguest, report_path, cert_dir):
         raise Exception(f"Failed to verify attestation report: {e}")
 
 
-def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, cert_dir, data_path, gatk_script, result_path):
+def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, cert_dir, data_path, gatk_script, result_dir):
     client_sock = socket(AF_INET, SOCK_STREAM)
 
     client_sock.connect((server_host, server_port))
@@ -97,16 +97,13 @@ def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, c
         with open(gatk_script, "rb") as f:
             script_content = f.read()
 
-        send_message(client_ssock, f"SCRIPT {os.path.basename(gatk_script)} {result_path}".encode())
+        send_message(client_ssock, f"SCRIPT {os.path.basename(gatk_script)} {result_dir}".encode())
         send_message(client_ssock, script_content)
 
         # get results and write to result_path
-        result_content = receive_message(client_ssock)
+        s3_result_dir = receive_message(client_ssock).decode()
 
-        with open(result_path, "wb") as f:
-            f.write(result_content)
-
-        print(f"Results received and stored in {result_path}")
+        print(f"Results received and stored in s3 under {s3_result_dir}")
 
     except Exception as e:
         client_ssock.close()
@@ -126,7 +123,7 @@ def main():
     parser.add_argument('-cd', '--cert_dir', default="./certs", help="Location to write certificates to (default: ./certs)")
     parser.add_argument('-d', '--data', required=True, help="Name of file containing all newline separated data files required to execute gatk script")
     parser.add_argument('-gs', '--gatk_script', required=True, help="Script to fetch gatk executable and run gatk commands")
-    parser.add_argument('-r', '--result', required=True, help="Name of file that results of executing gatk_script will be stored in relative to location of gatk_script")
+    parser.add_argument('-r', '--result', required=True, help="Name of directory that results of executing gatk_script will be stored in relative to location of gatk_script")
 
     args = parser.parse_args()
 
