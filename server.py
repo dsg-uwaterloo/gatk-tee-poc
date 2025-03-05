@@ -1,4 +1,5 @@
 import argparse
+import random
 import os
 import subprocess
 import sys
@@ -13,7 +14,8 @@ from socket import *
 
 # constants
 S3 = boto3.client('s3')
-BUCKET_NAME = "gatk-amd-genomics-test-data"
+DATA_BUCKET = "gatk-amd-genomics-test-data"
+RESULT_BUCKET = "gatk-amd-genomics-result"
 CLIENT_FS_BASE = os.path.expanduser("~/client")
 
 # send self-signed certificate
@@ -110,7 +112,7 @@ def handle_client_connection(client_ssock, snpguest):
                     data_files = f.readlines()
 
                 for data_file in data_files:
-                    response = S3.get_object(Bucket=BUCKET_NAME, Key=data_file)
+                    response = S3.get_object(Bucket=DATA_BUCKET, Key=data_file)
                     with open(data_file, "wb") as f:
                         f.write(response['Body'].read())
 
@@ -120,15 +122,23 @@ def handle_client_connection(client_ssock, snpguest):
                 print(f"Finished reading and decrypting data files in {file_path}")
 
             elif cmd[0] == "SCRIPT":
-                result_path = cmd[2]
+                result_dir = cmd[2]
                 # set file_path as executable and execute script (with no arguments)
                 subprocess.run(f"chmod +x {file_path}; bash {file_path}", shell=True, check=True, capture_output=True)
 
-                # send result back to client
-                with open(os.path.join(CLIENT_FS_BASE, result_path), "rb") as f:
-                    result_content = f.read()
+                # create new s3 directory
+                s3_dir = "result-" + random.randint()
+                while "Common prefixes" in S3.list_objects(Bucket=RESULT_BUCKET, Prefix=s3_dir, Delimiter='/',MaxKeys=1):
+                    s3_dir = "result-" + random.randint()
 
-                send_message(client_ssock, result_content)
+                # upload all files under result_dir to s3_dir
+                for filename in os.listdir(result_dir):
+                    file_path = os.path.join(result_dir, filename)
+                    if os.path.isfile(file_path):
+                        with open(file_path, "rb") as f:
+                            S3.Object(RESULT_BUCKET, os.path.join(s3_dir, filename)).put(Body=f.read())
+
+                send_message(client_ssock, s3_dir)
                 print(f"Finished running script {file_path}")
 
     except Exception as e:
