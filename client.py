@@ -2,6 +2,7 @@ import argparse
 import os
 import subprocess
 import sys
+import time
 
 from helper import *
 from socket import *
@@ -65,6 +66,7 @@ def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, c
     client_ssock = context.wrap_socket(client_sock, server_hostname=server_host)
 
     try:
+        start_time = time.time()
         # receive and write attestation report to file
         report_path = os.path.join(report_dir, "report.bin")
         report_contents = receive_message(client_ssock)
@@ -86,6 +88,9 @@ def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, c
         verify_vlek(cert_dir)
         verify_attestation(snpguest, report_path, cert_dir)
 
+        print(f"Total attestation time: {time.time() - start_time} seconds")
+        start_time = time.time()
+
         # send file with required data files that server should fetch from s3 bucket
         with open(data_path, "rb") as f:
             data_content = f.read()
@@ -104,6 +109,7 @@ def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, c
         s3_result_dir = receive_message(client_ssock).decode()
 
         print(f"Results received and stored in s3 under {s3_result_dir}")
+        print(f"Total data fetching and script execution time: {time.time() - start_time} seconds")
 
     except Exception as e:
         client_ssock.close()
@@ -145,7 +151,9 @@ def main():
         elif not os.path.isfile(args.snpguest):
             print(f"Cannot find executable {args.snpguest}.")
 
+        start_time = time.time()
         run_client(args.server_host, int(args.server_port), os.path.join(args.cert_dir, args.root_cert_file), args.snpguest, args.report_dir, args.cert_dir, args.data, args.gatk_script, args.result)
+        print(f"Total end-to-end execution time: {time.time() - start_time} seconds")
     except Exception as e:
         print(f"Error: {e}")
         remove_dirs([args.report_dir, args.cert_dir])
