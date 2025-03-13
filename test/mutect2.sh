@@ -12,5 +12,5 @@ if [ ! -d gatk-${version} ]; then
 fi
 
 cd gatk-${version}
-./gatk Mutect2 -R ../hg38_genomic.fasta -I ../hg38_exome_chr21small.cram -O ../results/single_sample.vcf.gz > ../results/result.txt 2>&1
-./gatk ValidateSamFile -I ../NA12878.bam -M SUMMARY > ../results/result.txt 2>&1
+# ALLOW ADDITIONAL MEMORY DEPENDING ON HOW MUCH RAM VMS HAVE
+./gatk Mutect2 -R ../hg38_genomic.fasta -I ../hg38_exome_chr21.cram -O ../results/hg38_exome_chr21.vcf.gz > ../results/result.txt 2>&1

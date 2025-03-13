@@ -1,28 +1,80 @@
 import argparse
+import datetime
 import random
 import os
 import subprocess
 import sys
 import shutil
 import pathlib
+import pytz
 import time
 
 import boto3
+import botocore
 
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
 from helper import *
 from ssl import *
 from socket import *
 
 # constants
-S3 = boto3.client('s3')
+S3 = boto3.client('s3', region_name='us-east-2')
 DATA_BUCKET = "gatk-amd-genomics-test-data"
 RESULT_BUCKET = "gatk-amd-genomics-result"
 CLIENT_FS_BASE = os.path.expanduser("~/client")
+
+RSA_PRIVATE_FILE = "rsa_priv.pem"
+RSA_PUBLIC_FILE = "rsa_pub.pem"
 
 # send self-signed certificate
 def send_self_cert(socket, self_cert_path):
     with open(self_cert_path, "rb") as f:
         send_message(socket, f.read())
+
+# generate rsa filename
+def get_rsa_filename(infix: str):
+    return "rsa_" + infix + ".pem"
+
+# fetch and decrypt s3_sym_key_file
+def decrypt_symmetric_key(s3_sym_key_file, secrets_dir):
+    try:
+        response = S3.get_object(Bucket=DATA_BUCKET, 
+                                 Key=s3_sym_key_file, 
+                                 IfModifiedSince=datetime.datetime.fromtimestamp(os.path.getmtime(public_path), tz=pytz.timezone('US/Eastern'))
+                                 )
+        public_path = os.path.join(secrets_dir, RSA_PUBLIC_FILE)
+        private_path = os.path.join(secrets_dir, RSA_PRIVATE_FILE)
+        
+        encrypted = response['Body'].read()
+
+        with open(private_path, "rb") as key_file:
+            private_key = serialization.load_pem_private_key(
+                key_file.read(),
+                password=None
+            )
+
+        return private_key.decrypt(
+            encrypted,
+            padding.OAEP(
+                mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                algorithm=hashes.SHA256(),
+                label=None
+            )).decode()
+    except botocore.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == 'InvalidObjectState':
+            raise Exception("Symmetric key encrypted with previous version of RSA public key")
+        else:
+            raise Exception("Unexpected exception while fetching symmetric key")
+
+# generate rsa keypair for decrypting symmetric keys
+def generate_rsa_key():
+    private_key = rsa.generate_private_key(
+        public_exponent=65537, key_size=2048
+    )
+    return private_key
 
 # generate the private key for ssl
 def generate_private_key(key_path):
@@ -62,7 +114,7 @@ def generate_attestation_report(snpguest: str):
     return report_file
 
 # sends attestation and handles requests for each TCP connection
-def handle_client_connection(client_ssock, snpguest):
+def handle_client_connection(client_ssock, snpguest, secrets_dir):
     create_dirs([CLIENT_FS_BASE])
 
     try:
@@ -106,7 +158,12 @@ def handle_client_connection(client_ssock, snpguest):
                 with open(file_path, "wb") as f:
                     f.write(file_contents)
 
-            if cmd[0] == "DATA":
+            if cmd[0] == "RSA":
+                # share rsa public key
+                with open(os.path.join(secrets_dir, RSA_PUBLIC_FILE), 'rb') as f:
+                    send_message(client_ssock, f.read())
+            elif cmd[0] == "DATA":
+                # fetch and decrypt data files from s3
                 start_time = time.time()
                 # fetch data files specified in file_path from s3
                 with open(file_path, "r") as f:
@@ -117,8 +174,9 @@ def handle_client_connection(client_ssock, snpguest):
                     with open(data_file, "wb") as f:
                         f.write(response['Body'].read())
 
+                    symmetric_key = decrypt_symmetric_key(response['Metadata']['symmetric-key'], secrets_dir)
                     # decrypt file
-                    subprocess.run(f"gpg --batch --output {data_file[:-4]} --passphrase gatk2025 --decrypt {data_file}", shell=True, check=True)
+                    subprocess.run(f"gpg --batch --output {data_file[:-4]} --passphrase {symmetric_key} --decrypt {data_file}", shell=True, check=True)
                 
                 print(f"Finished reading and decrypting data files in {file_path}")
                 print(f"Time to fetch and decrypt data: {time.time() - start_time} seconds")
@@ -161,7 +219,7 @@ def handle_client_connection(client_ssock, snpguest):
     shutil.rmtree(pathlib.Path(CLIENT_FS_BASE))
 
 # run server
-def run_server(snpguest: str, key_path: str, self_cert_path: str):
+def run_server(snpguest: str, key_path: str, self_cert_path: str, secrets_dir: str):
     port = 8080
 
     server_sock = socket(AF_INET, SOCK_STREAM)
@@ -181,7 +239,7 @@ def run_server(snpguest: str, key_path: str, self_cert_path: str):
             send_self_cert(connection, self_cert_path)
             client_ssock = context.wrap_socket(connection, server_side=True)
 
-            handle_client_connection(client_ssock, snpguest)
+            handle_client_connection(client_ssock, snpguest, secrets_dir)
 
             client_ssock.close()
     except Exception as e:
@@ -225,8 +283,32 @@ def main():
                 sys.exit(1)
         elif not os.path.isfile(args.snpguest()):
             print(f"Cannot find file {args.snpguest()}.")
+
+        # generate and save rsa keypair if either key does not already exist
+        private_path = os.path.join(secrets_dir, RSA_PRIVATE_FILE)
+        public_path = os.path.join(secrets_dir, RSA_PUBLIC_FILE)
+        if not os.path.isfile(private_path) or not os.path.isfile(public_path):
+            private_key = generate_rsa_key()
+
+            private_pem = private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.TraditionalOpenSSL,
+                encryption_algorithm=serialization.NoEncryption()
+            )
+            public_pem = private_key.public_key().public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+
+            with open(private_path, 'wb') as f:
+                f.write(private_pem)
+            with open(public_path, 'wb') as f:
+                f.write(public_pem)
+
+            # import private key to gpg
+            subprocess.run(["gpg", "--import", private_path])
         
-        run_server(args.snpguest, key_path, cert_path)
+        run_server(args.snpguest, key_path, cert_path, secrets_dir)
     except Exception as e:
         print(f"Unexpected error occurred: {e}")
         sys.exit(1)
