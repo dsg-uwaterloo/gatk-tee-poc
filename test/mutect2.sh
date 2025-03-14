@@ -7,8 +7,8 @@ if [ ! -f gatk-${version}.zip ]; then
 fi
 
 if [ ! -d gatk-${version} ]; then
-	echo "Unzipping gatk" > ../results/out.txt
-	time unzip gatk-${version}.zip > ../results/out.txt
+	echo "Unzipping gatk"
+	unzip gatk-${version}.zip
 fi
 
 cd gatk-${version}
