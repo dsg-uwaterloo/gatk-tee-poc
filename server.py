@@ -56,7 +56,7 @@ def decrypt_symmetric_key(s3_sym_key_file, secrets_dir):
         subprocess.run(["openssl", "pkeyutl", "-decrypt", "-inkey", private_path, "-in", encrypted_path, "-out", decrypted_path])
 
         with open(decrypted_path, "r") as f:
-            decrypted = f.read()
+            decrypted = f.readline()
         return decrypted
     except botocore.exceptions.ClientError as e:
         if e.response['Error']['Code'] == 'InvalidObjectState':
