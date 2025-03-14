@@ -50,28 +50,14 @@ def decrypt_symmetric_key(s3_sym_key_file, secrets_dir):
                                  IfModifiedSince=datetime.datetime.fromtimestamp(os.path.getmtime(public_path), tz=pytz.timezone('US/Eastern'))
                                  )
         
-        with open(encrypted_path, 'wb') as f:
+        with open(encrypted_path, "wb") as f:
             f.write(response['Body'].read())
 
         subprocess.run(["openssl", "pkeyutl", "-decrypt", "-inkey", private_path, "-in", encrypted_path, "-out", decrypted_path])
 
-        with open(decrypted_path, 'r') as f:
+        with open(decrypted_path, "r") as f:
             decrypted = f.read()
         return decrypted
-
-        """with open(private_path, "rb") as key_file:
-            private_key = serialization.load_pem_private_key(
-                key_file.read(),
-                password=None
-            )
-
-        return private_key.decrypt(
-            encrypted,
-            padding.OAEP(
-                mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                algorithm=hashes.SHA256(),
-                label=None
-            )).decode()"""
     except botocore.exceptions.ClientError as e:
         if e.response['Error']['Code'] == 'InvalidObjectState':
             raise Exception("Symmetric key encrypted with previous version of RSA public key")
@@ -185,6 +171,7 @@ def handle_client_connection(client_ssock, snpguest, secrets_dir):
 
                     symmetric_key = decrypt_symmetric_key(response['Metadata']['symmetric-key'], secrets_dir)
                     # decrypt file
+                    print(f"gpg --batch --output {data_file[:-4]} --passphrase {symmetric_key} --decrypt {data_file}")
                     subprocess.run(f"gpg --batch --output {data_file[:-4]} --passphrase {symmetric_key} --decrypt {data_file}", shell=True, check=True)
                 
                 print(f"Finished reading and decrypting data files in {file_path}")
