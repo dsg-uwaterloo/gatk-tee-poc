@@ -41,16 +41,21 @@ def get_rsa_filename(infix: str):
 # fetch and decrypt s3_sym_key_file
 def decrypt_symmetric_key(s3_sym_key_file, secrets_dir):
     try:
+        encrypted_path = os.path.join(secrets_dir, "encrypted.txt")
+        decrypted_path = os.path.join(secrets_dir, "decrypted.txt")
+        public_path = os.path.join(secrets_dir, RSA_PUBLIC_FILE)
+        private_path = os.path.join(secrets_dir, RSA_PRIVATE_FILE)
         response = S3.get_object(Bucket=DATA_BUCKET, 
                                  Key=s3_sym_key_file, 
                                  IfModifiedSince=datetime.datetime.fromtimestamp(os.path.getmtime(public_path), tz=pytz.timezone('US/Eastern'))
                                  )
-        public_path = os.path.join(secrets_dir, RSA_PUBLIC_FILE)
-        private_path = os.path.join(secrets_dir, RSA_PRIVATE_FILE)
         
-        encrypted = response['Body'].read()
+        with open(encrypted_path, "wb") as f:
+            f.write(response['Body'].read())
 
-        with open(private_path, "rb") as key_file:
+        subprocess.run(["openssl", "pkeyutl", "-decrypt", "-inkey", private_path, "-in", encrypted_path, "-out", decrypted_path])
+
+        """with open(private_path, "rb") as key_file:
             private_key = serialization.load_pem_private_key(
                 key_file.read(),
                 password=None
@@ -62,7 +67,7 @@ def decrypt_symmetric_key(s3_sym_key_file, secrets_dir):
                 mgf=padding.MGF1(algorithm=hashes.SHA256()),
                 algorithm=hashes.SHA256(),
                 label=None
-            )).decode()
+            )).decode()"""
     except botocore.exceptions.ClientError as e:
         if e.response['Error']['Code'] == 'InvalidObjectState':
             raise Exception("Symmetric key encrypted with previous version of RSA public key")
@@ -304,9 +309,6 @@ def main():
                 f.write(private_pem)
             with open(public_path, 'wb') as f:
                 f.write(public_pem)
-
-            # import private key to gpg
-            subprocess.run(["gpg", "--import", private_path])
         
         run_server(args.snpguest, key_path, cert_path, secrets_dir)
     except Exception as e:
