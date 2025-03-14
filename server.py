@@ -50,10 +50,14 @@ def decrypt_symmetric_key(s3_sym_key_file, secrets_dir):
                                  IfModifiedSince=datetime.datetime.fromtimestamp(os.path.getmtime(public_path), tz=pytz.timezone('US/Eastern'))
                                  )
         
-        with open(encrypted_path, "wb") as f:
+        with open(encrypted_path, 'wb') as f:
             f.write(response['Body'].read())
 
         subprocess.run(["openssl", "pkeyutl", "-decrypt", "-inkey", private_path, "-in", encrypted_path, "-out", decrypted_path])
+
+        with open(decrypted_path, 'r') as f:
+            decrypted = f.read()
+        return decrypted
 
         """with open(private_path, "rb") as key_file:
             private_key = serialization.load_pem_private_key(
