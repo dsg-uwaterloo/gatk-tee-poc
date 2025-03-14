@@ -171,7 +171,6 @@ def handle_client_connection(client_ssock, snpguest, secrets_dir):
 
                     symmetric_key = decrypt_symmetric_key(response['Metadata']['symmetric-key'], secrets_dir)
                     # decrypt file
-                    print(f"gpg --batch --output {data_file[:-4]} --passphrase {symmetric_key} --decrypt {data_file}")
                     subprocess.run(f"gpg --batch --output {data_file[:-4]} --passphrase {symmetric_key} --decrypt {data_file}", shell=True, check=True)
                 
                 print(f"Finished reading and decrypting data files in {file_path}")
