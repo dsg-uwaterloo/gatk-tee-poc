@@ -57,7 +57,7 @@ def decrypt_symmetric_key(s3_sym_key_file, secrets_dir):
 
         with open(decrypted_path, "r") as f:
             decrypted = f.readline()
-        return decrypted
+        return decrypted.strip()
     except botocore.exceptions.ClientError as e:
         if e.response['Error']['Code'] == 'InvalidObjectState':
             raise Exception("Symmetric key encrypted with previous version of RSA public key")
