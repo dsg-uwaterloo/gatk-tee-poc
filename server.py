@@ -165,6 +165,7 @@ def handle_client_connection(client_ssock, snpguest, secrets_dir):
                     data_files = f.readlines()
 
                 for data_file in data_files:
+                    data_file = data_file.strip()
                     response = S3.get_object(Bucket=DATA_BUCKET, Key=data_file)
                     with open(data_file, "wb") as f:
                         f.write(response['Body'].read())
