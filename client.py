@@ -92,7 +92,7 @@ def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, c
             verify_attestation(snpguest, report_path, cert_dir)
 
             print(f"Total attestation time: {time.time() - start_time} seconds")
-            
+
         start_time = time.time()
 
         # send file with required data files that server should fetch from s3 bucket
@@ -144,7 +144,7 @@ def main():
     create_dirs([args.report_dir, args.cert_dir])
 
     try:
-        if SECURE and not args.snpguest:
+        if not args.snpguest:
             try:
                 # fetch and build snpguest from source
                 if not os.path.isdir("./snpguest"):

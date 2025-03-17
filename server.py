@@ -275,7 +275,7 @@ def main():
         generate_private_key(key_path)
         generate_self_signed_cert(key_path, cert_path, args.common_name)
         
-        if SECURE and not args.snpguest:
+        if not args.snpguest:
             try:
                 # fetch and build snpguest from source
                 if not os.path.isdir("./snpguest"):
