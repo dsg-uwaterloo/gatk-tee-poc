@@ -263,6 +263,7 @@ def main():
         args = parser.parse_args()
 
         if args.insecure:
+            global SECURE
             SECURE = False
 
         # generate private key and certificates for ssl
