@@ -29,6 +29,9 @@ CLIENT_FS_BASE = os.path.expanduser("~/client")
 RSA_PRIVATE_FILE = "rsa_priv.pem"
 RSA_PUBLIC_FILE = "rsa_pub.pem"
 
+# global variables
+SECURE = True
+
 # send self-signed certificate
 def send_self_cert(socket, self_cert_path):
     with open(self_cert_path, "rb") as f:
@@ -113,27 +116,30 @@ def handle_client_connection(client_ssock, snpguest, secrets_dir):
     create_dirs([CLIENT_FS_BASE])
 
     try:
-        # AMD SEV-SNP attestation
-        # generate and send attestation
-        report_file = generate_attestation_report(snpguest)
+        if SECURE:
+            # AMD SEV-SNP attestation
+            # generate and send attestation
+            start_time = time.time()
+            report_file = generate_attestation_report(snpguest)
 
-        with open(report_file, "rb") as f:
-            report_content = f.read()
+            with open(report_file, "rb") as f:
+                report_content = f.read()
 
-        # Send the length of the attestation report to the client
-        send_message(client_ssock, report_content)
+            # Send the length of the attestation report to the client
+            send_message(client_ssock, report_content)
 
-        # generate and send certificates
-        cert_dir = generate_certificates(snpguest)
+            # generate and send certificates
+            cert_dir = generate_certificates(snpguest)
 
-        for cert_file in os.listdir(cert_dir):
-            with open(os.path.join(cert_dir, cert_file), "rb") as f:
-                cert_content = f.read()
+            for cert_file in os.listdir(cert_dir):
+                with open(os.path.join(cert_dir, cert_file), "rb") as f:
+                    cert_content = f.read()
 
-            send_message(client_ssock, cert_file.encode())
-            send_message(client_ssock, cert_content)
-        
-        send_message(client_ssock, "\r\n".encode())
+                send_message(client_ssock, cert_file.encode())
+                send_message(client_ssock, cert_content)
+            
+            send_message(client_ssock, "\r\n".encode())
+            print(f"Time to send attestation report and certificates: {time.time() - start_time} seconds")
 
         # change into client directory
         os.chdir(CLIENT_FS_BASE);
@@ -143,7 +149,7 @@ def handle_client_connection(client_ssock, snpguest, secrets_dir):
             cmd = receive_message(client_ssock).decode().split()
             file_path = ''
 
-            if len(cmd) < 2 or cmd[0] not in ["DATA", "SCRIPT"]:
+            if len(cmd) < 2 or cmd[0] not in ["DATA", "SCRIPT", "RSA"]:
                 break
             
             if cmd[0] in ["DATA", "SCRIPT"]:
@@ -252,8 +258,12 @@ def main():
         parser.add_argument('-kf', '--key_file', default="server.key", help="Private key file (default: server.key)")
         parser.add_argument('-cf', '--cert_file', default="server.pem", help="Self-signed certificate file (default: server.pem)")
         parser.add_argument('-cn', '--common_name', default=gethostname(), help=f"Common name for generating self-signed certificate (default: {gethostname()})")
+        parser.add_argument('-is', '--insecure', action='store_true', help="Flag for running script outside of a trusted execution environment")
 
         args = parser.parse_args()
+
+        if args.insecure:
+            SECURE = False
 
         # generate private key and certificates for ssl
         secrets_dir = os.path.expanduser(args.secrets_dir)
@@ -265,7 +275,7 @@ def main():
         generate_private_key(key_path)
         generate_self_signed_cert(key_path, cert_path, args.common_name)
         
-        if not args.snpguest:
+        if SECURE and not args.snpguest:
             try:
                 # fetch and build snpguest from source
                 if not os.path.isdir("./snpguest"):
