@@ -139,6 +139,7 @@ def main():
     args = parser.parse_args()
 
     if args.insecure:
+        global SECURE
         SECURE = False
 
     create_dirs([args.report_dir, args.cert_dir])
