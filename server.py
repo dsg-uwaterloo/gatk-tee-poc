@@ -31,6 +31,7 @@ RSA_PUBLIC_FILE = "rsa_pub.pem"
 
 # global variables
 SECURE = True
+TESTING=False
 
 # send self-signed certificate
 def send_self_cert(socket, self_cert_path):
@@ -48,10 +49,15 @@ def decrypt_symmetric_key(s3_sym_key_file, secrets_dir):
         decrypted_path = os.path.join(secrets_dir, "decrypted.txt")
         public_path = os.path.join(secrets_dir, RSA_PUBLIC_FILE)
         private_path = os.path.join(secrets_dir, RSA_PRIVATE_FILE)
-        response = S3.get_object(Bucket=DATA_BUCKET, 
-                                 Key=s3_sym_key_file, 
-                                 IfModifiedSince=datetime.datetime.fromtimestamp(os.path.getmtime(public_path), tz=pytz.timezone('US/Eastern'))
-                                 )
+        if TESTING:
+            response = S3.get_object(Bucket=DATA_BUCKET, 
+                                    Key=s3_sym_key_file 
+                                    )
+        else:
+            response = S3.get_object(Bucket=DATA_BUCKET, 
+                                    Key=s3_sym_key_file, 
+                                    IfModifiedSince=datetime.datetime.fromtimestamp(os.path.getmtime(public_path), tz=pytz.timezone('US/Eastern'))
+                                    )
         
         with open(encrypted_path, "wb") as f:
             f.write(response['Body'].read())
@@ -259,10 +265,13 @@ def main():
         parser.add_argument('-kf', '--key_file', default="server.key", help="Private key file (default: server.key)")
         parser.add_argument('-cf', '--cert_file', default="server.pem", help="Self-signed certificate file (default: server.pem)")
         parser.add_argument('-cn', '--common_name', default=gethostname(), help=f"Common name for generating self-signed certificate (default: {gethostname()})")
-        parser.add_argument('-is', '--insecure', action='store_true', help="Flag for running script outside of a trusted execution environment")
+        parser.add_argument('-is', '--insecure', action='store_true', help="Flag for running server outside of a trusted execution environment")
+        parser.add_argument('-t', '--testing', action='store_true', help="Flag for running server for testing")
 
         args = parser.parse_args()
 
+        global TESTING
+        TESTING = args.testing
         if args.insecure:
             global SECURE
             SECURE = False
