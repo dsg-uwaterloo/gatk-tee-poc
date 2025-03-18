@@ -217,8 +217,6 @@ def handle_client_connection(client_ssock, snpguest, secrets_dir):
                 print(f"Time to upload results to S3: {time.time() - start_time} seconds")
                 send_message(client_ssock, s3_dir.encode())
                 print(f"Uploaded results to {s3_dir}")
-                
-
     except Exception as e:
         print(e)
 
@@ -228,14 +226,14 @@ def handle_client_connection(client_ssock, snpguest, secrets_dir):
     shutil.rmtree(pathlib.Path(CLIENT_FS_BASE))
 
 # run server
-def run_server(snpguest: str, key_path: str, self_cert_path: str, secrets_dir: str):
+def run_server(snpguest: str, key_path: str, self_cert_path: str, secrets_dir: str, common_name: str):
     port = 8080
 
     server_sock = socket(AF_INET, SOCK_STREAM)
     server_sock.bind(('', port))
     server_sock.listen(10)
 
-    print(f"SERVER_HOST={gethostname()}")
+    print(f"SERVER_HOST={common_name}")
     print(f"SERVER_PORT={server_sock.getsockname()[1]}")
 
     context = SSLContext(PROTOCOL_TLS_SERVER)
@@ -243,14 +241,19 @@ def run_server(snpguest: str, key_path: str, self_cert_path: str, secrets_dir: s
 
     try:
         while True:
-            connection, _ = server_sock.accept()
-            # send self-signed certificate
-            send_self_cert(connection, self_cert_path)
-            client_ssock = context.wrap_socket(connection, server_side=True)
+            try:
+                connection, _ = server_sock.accept()
+                # send self-signed certificate
+                send_self_cert(connection, self_cert_path)
+                client_ssock = context.wrap_socket(connection, server_side=True)
 
-            handle_client_connection(client_ssock, snpguest, secrets_dir)
+                handle_client_connection(client_ssock, snpguest, secrets_dir)
 
-            client_ssock.close()
+                client_ssock.close()
+            except KeyboardInterrupt as e:
+                raise e
+            except Exception as e:
+                print(e)
     except Exception as e:
         print(e)
 
@@ -322,7 +325,7 @@ def main():
             with open(public_path, 'wb') as f:
                 f.write(public_pem)
         
-        run_server(args.snpguest, key_path, cert_path, secrets_dir)
+        run_server(args.snpguest, key_path, cert_path, secrets_dir, args.common_name)
     except Exception as e:
         print(f"Unexpected error occurred: {e}")
         sys.exit(1)
