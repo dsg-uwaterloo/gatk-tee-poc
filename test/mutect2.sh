@@ -13,4 +13,4 @@ fi
 
 cd gatk-${version}
 # ALLOW ADDITIONAL MEMORY DEPENDING ON HOW MUCH RAM VMS HAVE
-./gatk --java-options "-Xmx8G" Mutect2 -R ../hg38_genomic.fasta -I ../hg38_exome_chr21.cram -O ../results/hg38_exome_chr21.vcf.gz > ../results/result.txt 2>&1
+./gatk --java-options "-Xmx16G" Mutect2 -R ../hg38_genomic.fasta -I ../hg38_exome_chr21.cram -O ../results/hg38_exome_chr21.vcf.gz > ../results/result.txt 2>&1

@@ -186,7 +186,7 @@ def handle_client_connection(client_ssock, snpguest, secrets_dir):
             elif cmd[0] == "SCRIPT":
                 result_dir = cmd[2]
                 create_dirs([result_dir])
-                print(f"Running clietn script: {file_path}")
+                print(f"Running client script: {file_path}")
 
                 start_time = time.time()
 
