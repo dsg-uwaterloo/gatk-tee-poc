@@ -1,27 +1,84 @@
 import argparse
+import datetime
 import random
 import os
 import subprocess
 import sys
 import shutil
 import pathlib
+import pytz
+import time
 
 import boto3
+import botocore
 
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
 from helper import *
 from ssl import *
 from socket import *
 
 # constants
-S3 = boto3.client('s3')
+S3 = boto3.client('s3', region_name='us-east-2')
 DATA_BUCKET = "gatk-amd-genomics-test-data"
 RESULT_BUCKET = "gatk-amd-genomics-result"
 CLIENT_FS_BASE = os.path.expanduser("~/client")
+
+RSA_PRIVATE_FILE = "rsa_priv.pem"
+RSA_PUBLIC_FILE = "rsa_pub.pem"
+
+# global variables
+SECURE = True
+TESTING=False
 
 # send self-signed certificate
 def send_self_cert(socket, self_cert_path):
     with open(self_cert_path, "rb") as f:
         send_message(socket, f.read())
+
+# generate rsa filename
+def get_rsa_filename(infix: str):
+    return "rsa_" + infix + ".pem"
+
+# fetch and decrypt s3_sym_key_file
+def decrypt_symmetric_key(s3_sym_key_file, secrets_dir):
+    try:
+        encrypted_path = os.path.join(secrets_dir, "encrypted.txt")
+        decrypted_path = os.path.join(secrets_dir, "decrypted.txt")
+        public_path = os.path.join(secrets_dir, RSA_PUBLIC_FILE)
+        private_path = os.path.join(secrets_dir, RSA_PRIVATE_FILE)
+        if TESTING:
+            response = S3.get_object(Bucket=DATA_BUCKET, 
+                                    Key=s3_sym_key_file 
+                                    )
+        else:
+            response = S3.get_object(Bucket=DATA_BUCKET, 
+                                    Key=s3_sym_key_file, 
+                                    IfModifiedSince=datetime.datetime.fromtimestamp(os.path.getmtime(public_path), tz=pytz.timezone('US/Eastern'))
+                                    )
+        
+        with open(encrypted_path, "wb") as f:
+            f.write(response['Body'].read())
+
+        subprocess.run(["openssl", "pkeyutl", "-decrypt", "-inkey", private_path, "-in", encrypted_path, "-out", decrypted_path])
+
+        with open(decrypted_path, "r") as f:
+            decrypted = f.readline()
+        return decrypted.strip()
+    except botocore.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == 'InvalidObjectState':
+            raise Exception("Symmetric key encrypted with previous version of RSA public key")
+        else:
+            raise Exception("Unexpected exception while fetching symmetric key")
+
+# generate rsa keypair for decrypting symmetric keys
+def generate_rsa_key():
+    private_key = rsa.generate_private_key(
+        public_exponent=65537, key_size=2048
+    )
+    return private_key
 
 # generate the private key for ssl
 def generate_private_key(key_path):
@@ -61,31 +118,34 @@ def generate_attestation_report(snpguest: str):
     return report_file
 
 # sends attestation and handles requests for each TCP connection
-def handle_client_connection(client_ssock, snpguest):
+def handle_client_connection(client_ssock, snpguest, secrets_dir):
     create_dirs([CLIENT_FS_BASE])
 
     try:
-        # AMD SEV-SNP attestation
-        # generate and send attestation
-        report_file = generate_attestation_report(snpguest)
+        if SECURE:
+            # AMD SEV-SNP attestation
+            # generate and send attestation
+            start_time = time.time()
+            report_file = generate_attestation_report(snpguest)
 
-        with open(report_file, "rb") as f:
-            report_content = f.read()
+            with open(report_file, "rb") as f:
+                report_content = f.read()
 
-        # Send the length of the attestation report to the client
-        send_message(client_ssock, report_content)
+            # Send the length of the attestation report to the client
+            send_message(client_ssock, report_content)
 
-        # generate and send certificates
-        cert_dir = generate_certificates(snpguest)
+            # generate and send certificates
+            cert_dir = generate_certificates(snpguest)
 
-        for cert_file in os.listdir(cert_dir):
-            with open(os.path.join(cert_dir, cert_file), "rb") as f:
-                cert_content = f.read()
+            for cert_file in os.listdir(cert_dir):
+                with open(os.path.join(cert_dir, cert_file), "rb") as f:
+                    cert_content = f.read()
 
-            send_message(client_ssock, cert_file.encode())
-            send_message(client_ssock, cert_content)
-        
-        send_message(client_ssock, "\r\n".encode())
+                send_message(client_ssock, cert_file.encode())
+                send_message(client_ssock, cert_content)
+            
+            send_message(client_ssock, "\r\n".encode())
+            print(f"Time to send attestation report and certificates: {time.time() - start_time} seconds")
 
         # change into client directory
         os.chdir(CLIENT_FS_BASE);
@@ -95,7 +155,7 @@ def handle_client_connection(client_ssock, snpguest):
             cmd = receive_message(client_ssock).decode().split()
             file_path = ''
 
-            if len(cmd) < 2 or cmd[0] not in ["DATA", "SCRIPT"]:
+            if len(cmd) < 2 or cmd[0] not in ["DATA", "SCRIPT", "RSA"]:
                 break
             
             if cmd[0] in ["DATA", "SCRIPT"]:
@@ -105,28 +165,43 @@ def handle_client_connection(client_ssock, snpguest):
                 with open(file_path, "wb") as f:
                     f.write(file_contents)
 
-            if cmd[0] == "DATA":
+            if cmd[0] == "RSA":
+                # share rsa public key
+                with open(os.path.join(secrets_dir, RSA_PUBLIC_FILE), 'rb') as f:
+                    send_message(client_ssock, f.read())
+            elif cmd[0] == "DATA":
+                # fetch and decrypt data files from s3
+                start_time = time.time()
                 # fetch data files specified in file_path from s3
                 with open(file_path, "r") as f:
                     data_files = f.readlines()
 
                 for data_file in data_files:
+                    data_file = data_file.strip()
                     response = S3.get_object(Bucket=DATA_BUCKET, Key=data_file)
                     with open(data_file, "wb") as f:
                         f.write(response['Body'].read())
 
+                    symmetric_key = decrypt_symmetric_key(response['Metadata']['symmetric-key'], secrets_dir)
                     # decrypt file
-                    subprocess.run(f"gpg --batch --output {data_file[:-4]} --passphrase gatk2025 --decrypt {data_file}", shell=True, check=True)
+                    subprocess.run(f"gpg --batch --output {data_file[:-4]} --passphrase {symmetric_key} --decrypt {data_file}", shell=True, check=True)
                 
                 print(f"Finished reading and decrypting data files in {file_path}")
+                print(f"Time to fetch and decrypt data: {time.time() - start_time} seconds")
 
             elif cmd[0] == "SCRIPT":
                 result_dir = cmd[2]
                 create_dirs([result_dir])
+                print(f"Running client script: {file_path}")
+
+                start_time = time.time()
+
                 # set file_path as executable and execute script (with no arguments)
                 subprocess.run(f"chmod +x {file_path}; bash {file_path}", shell=True, check=True, capture_output=True)
                 print(f"Finished running script {file_path}")
+                print(f"Time to run client script: {time.time() - start_time} seconds")
 
+                start_time = time.time()
                 # create new s3 directory
                 s3_dir = "result-" + str(random.randint(0, sys.maxsize * 2 + 1))
                 while "Common prefixes" in S3.list_objects(Bucket=RESULT_BUCKET, Prefix=s3_dir, Delimiter='/',MaxKeys=1):
@@ -139,9 +214,9 @@ def handle_client_connection(client_ssock, snpguest):
                         with open(file_path, "rb") as f:
                             S3.put_object(Body=f.read(), Bucket=RESULT_BUCKET, Key=os.path.join(s3_dir, filename))
 
+                print(f"Time to upload results to S3: {time.time() - start_time} seconds")
                 send_message(client_ssock, s3_dir.encode())
                 print(f"Uploaded results to {s3_dir}")
-
     except Exception as e:
         print(e)
 
@@ -151,14 +226,14 @@ def handle_client_connection(client_ssock, snpguest):
     shutil.rmtree(pathlib.Path(CLIENT_FS_BASE))
 
 # run server
-def run_server(snpguest: str, key_path: str, self_cert_path: str):
+def run_server(snpguest: str, key_path: str, self_cert_path: str, secrets_dir: str, common_name: str):
     port = 8080
 
     server_sock = socket(AF_INET, SOCK_STREAM)
     server_sock.bind(('', port))
     server_sock.listen(10)
 
-    print(f"SERVER_HOST={gethostname()}")
+    print(f"SERVER_HOST={common_name}")
     print(f"SERVER_PORT={server_sock.getsockname()[1]}")
 
     context = SSLContext(PROTOCOL_TLS_SERVER)
@@ -166,14 +241,19 @@ def run_server(snpguest: str, key_path: str, self_cert_path: str):
 
     try:
         while True:
-            connection, _ = server_sock.accept()
-            # send self-signed certificate
-            send_self_cert(connection, self_cert_path)
-            client_ssock = context.wrap_socket(connection, server_side=True)
+            try:
+                connection, _ = server_sock.accept()
+                # send self-signed certificate
+                send_self_cert(connection, self_cert_path)
+                client_ssock = context.wrap_socket(connection, server_side=True)
 
-            handle_client_connection(client_ssock, snpguest)
+                handle_client_connection(client_ssock, snpguest, secrets_dir)
 
-            client_ssock.close()
+                client_ssock.close()
+            except KeyboardInterrupt as e:
+                raise e
+            except Exception as e:
+                print(e)
     except Exception as e:
         print(e)
 
@@ -188,8 +268,16 @@ def main():
         parser.add_argument('-kf', '--key_file', default="server.key", help="Private key file (default: server.key)")
         parser.add_argument('-cf', '--cert_file', default="server.pem", help="Self-signed certificate file (default: server.pem)")
         parser.add_argument('-cn', '--common_name', default=gethostname(), help=f"Common name for generating self-signed certificate (default: {gethostname()})")
+        parser.add_argument('-is', '--insecure', action='store_true', help="Flag for running server outside of a trusted execution environment")
+        parser.add_argument('-t', '--testing', action='store_true', help="Flag for running server for testing")
 
         args = parser.parse_args()
+
+        global TESTING
+        TESTING = args.testing
+        if args.insecure:
+            global SECURE
+            SECURE = False
 
         # generate private key and certificates for ssl
         secrets_dir = os.path.expanduser(args.secrets_dir)
@@ -215,8 +303,29 @@ def main():
                 sys.exit(1)
         elif not os.path.isfile(args.snpguest()):
             print(f"Cannot find file {args.snpguest()}.")
+
+        # generate and save rsa keypair if either key does not already exist
+        private_path = os.path.join(secrets_dir, RSA_PRIVATE_FILE)
+        public_path = os.path.join(secrets_dir, RSA_PUBLIC_FILE)
+        if not os.path.isfile(private_path) or not os.path.isfile(public_path):
+            private_key = generate_rsa_key()
+
+            private_pem = private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.TraditionalOpenSSL,
+                encryption_algorithm=serialization.NoEncryption()
+            )
+            public_pem = private_key.public_key().public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+
+            with open(private_path, 'wb') as f:
+                f.write(private_pem)
+            with open(public_path, 'wb') as f:
+                f.write(public_pem)
         
-        run_server(args.snpguest, key_path, cert_path)
+        run_server(args.snpguest, key_path, cert_path, secrets_dir, args.common_name)
     except Exception as e:
         print(f"Unexpected error occurred: {e}")
         sys.exit(1)

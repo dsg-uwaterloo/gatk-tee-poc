@@ -2,12 +2,15 @@ import argparse
 import os
 import subprocess
 import sys
+import time
 
 from helper import *
 from socket import *
 from ssl import *
 
-# 
+# global variables
+SECURE = True
+
 def fetch_server_certificate(socket, server_cert_file):
     server_cert_content = receive_message(socket)
 
@@ -65,26 +68,32 @@ def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, c
     client_ssock = context.wrap_socket(client_sock, server_hostname=server_host)
 
     try:
-        # receive and write attestation report to file
-        report_path = os.path.join(report_dir, "report.bin")
-        report_contents = receive_message(client_ssock)
+        if SECURE:
+            start_time = time.time()
+            # receive and write attestation report to file
+            report_path = os.path.join(report_dir, "report.bin")
+            report_contents = receive_message(client_ssock)
 
-        with open(report_path, "wb") as f:
-            f.write(report_contents)
+            with open(report_path, "wb") as f:
+                f.write(report_contents)
 
-        # get certificates
-        cert_filename = receive_message(client_ssock).decode()
-
-        while cert_filename != "\r\n":
-            cert_contents = receive_message(client_ssock)
-
-            with open(os.path.join(cert_dir, cert_filename), "wb") as f:
-                f.write(cert_contents)
-
+            # get certificates
             cert_filename = receive_message(client_ssock).decode()
 
-        verify_vlek(cert_dir)
-        verify_attestation(snpguest, report_path, cert_dir)
+            while cert_filename != "\r\n":
+                cert_contents = receive_message(client_ssock)
+
+                with open(os.path.join(cert_dir, cert_filename), "wb") as f:
+                    f.write(cert_contents)
+
+                cert_filename = receive_message(client_ssock).decode()
+
+            verify_vlek(cert_dir)
+            verify_attestation(snpguest, report_path, cert_dir)
+
+            print(f"Total attestation time: {time.time() - start_time} seconds")
+
+        start_time = time.time()
 
         # send file with required data files that server should fetch from s3 bucket
         with open(data_path, "rb") as f:
@@ -104,6 +113,7 @@ def run_client(server_host, server_port, root_cert_path, snpguest, report_dir, c
         s3_result_dir = receive_message(client_ssock).decode()
 
         print(f"Results received and stored in s3 under {s3_result_dir}")
+        print(f"Total data fetching and script execution time: {time.time() - start_time} seconds")
 
     except Exception as e:
         client_ssock.close()
@@ -124,8 +134,13 @@ def main():
     parser.add_argument('-d', '--data', required=True, help="Name of file containing all newline separated data files required to execute gatk script")
     parser.add_argument('-gs', '--gatk_script', required=True, help="Script to fetch gatk executable and run gatk commands")
     parser.add_argument('-r', '--result', required=True, help="Name of directory that results of executing gatk_script will be stored in relative to location of gatk_script")
+    parser.add_argument('-is', '--insecure', action='store_true', help="Flag for server running script outside of a trusted execution environment")
 
     args = parser.parse_args()
+
+    if args.insecure:
+        global SECURE
+        SECURE = False
 
     create_dirs([args.report_dir, args.cert_dir])
 
@@ -145,7 +160,9 @@ def main():
         elif not os.path.isfile(args.snpguest):
             print(f"Cannot find executable {args.snpguest}.")
 
+        start_time = time.time()
         run_client(args.server_host, int(args.server_port), os.path.join(args.cert_dir, args.root_cert_file), args.snpguest, args.report_dir, args.cert_dir, args.data, args.gatk_script, args.result)
+        print(f"Total end-to-end execution time: {time.time() - start_time} seconds")
     except Exception as e:
         print(f"Error: {e}")
         remove_dirs([args.report_dir, args.cert_dir])

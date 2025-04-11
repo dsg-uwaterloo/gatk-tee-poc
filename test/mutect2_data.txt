@@ -1,0 +1,5 @@
+hg38_genomic.fasta.gpg
+hg38_genomic.fasta.fai.gpg
+hg38_genomic.dict.gpg
+hg38_exome_chr21.cram.gpg
+hg38_exome_chr21.cram.crai.gpg
